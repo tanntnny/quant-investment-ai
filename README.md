@@ -7,6 +7,7 @@ Structure
 - configs/: Hydra configuration groups
 - src/: pipelines and core logic
 - scripts/: research utilities
+- tools/: helper CLIs and automation scripts
 - notebooks/: example notebooks
 - data/: raw, interim, processed
 - reports/: shareable outputs
@@ -18,6 +19,12 @@ Example commands
 - Prepare data: python -m src.main mode=prepare_data
 - Evaluate a run: python -m src.main mode=eval +run_dir=outputs/<run_id>
 - Generate report: python -m src.main mode=report +run_dir=outputs/<run_id>
+
+Log helpers
+- Unified entrypoint: `python tools/dev.py logs latest`
+- Show latest log files: `python tools/logs.py latest`
+- Show latest 20 matching files: `python tools/logs.py latest -n 20 --pattern "*.log"`
+- Tail newest file: `python tools/logs.py tail --lines 100`
 
 Trainer options
 - Simple (default): trainer=default
