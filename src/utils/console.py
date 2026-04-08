@@ -35,6 +35,28 @@ def render_kv_table(
     _CONSOLE.print(table)
 
 
+def render_records_table(
+    title: str,
+    rows: list[Mapping[str, Any]],
+    *,
+    columns: list[tuple[str, str]] | None = None,
+) -> None:
+    table = Table(title=title, show_header=True, header_style="bold magenta")
+
+    resolved_columns = columns
+    if resolved_columns is None:
+        keys = list(rows[0].keys()) if rows else []
+        resolved_columns = [(key, key) for key in keys]
+
+    for _, header in resolved_columns:
+        table.add_column(header, style="white")
+
+    for row in rows:
+        table.add_row(*[_format_value(row.get(key)) for key, _ in resolved_columns])
+
+    _CONSOLE.print(table)
+
+
 def _format_value(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.3f}".rstrip("0").rstrip(".")

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
-from src.utils.console import announce, render_kv_table
+from src.utils.console import announce, render_kv_table, render_records_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
 
@@ -60,13 +61,17 @@ class PytorchTrainer:
         announce("Trainer starting train loop", style="green")
         callbacks.on_train_start()
 
-        train_aggregates: dict[str, float] = {}
-        val_aggregates: dict[str, float] = {}
-        train_steps = 0
-        val_steps = 0
+        epoch_history: list[dict[str, float | int]] = []
+        total_train_steps = 0
+        stop_training = False
 
-        model.train()
-        for _ in range(self.max_epochs):
+        for epoch in range(1, self.max_epochs + 1):
+            train_aggregates: dict[str, float] = {}
+            val_aggregates: dict[str, float] = {}
+            train_steps = 0
+            val_steps = 0
+
+            model.train()
             for batch in datamodule.train_dataloader():
                 optimizer.zero_grad(set_to_none=True)
                 batch = _move_to_device(batch, device)
@@ -87,51 +92,73 @@ class PytorchTrainer:
                     {"loss": loss.detach(), **_as_metric_dict(loss_result), **_as_metric_dict(metric_values)},
                 )
                 train_steps += 1
+                total_train_steps += 1
 
-                if 0 < self.max_steps <= train_steps:
+                if 0 < self.max_steps <= total_train_steps:
+                    stop_training = True
                     break
-            if 0 < self.max_steps <= train_steps:
-                break
 
-        if hasattr(datamodule, "val_dataloader"):
-            model.eval()
-            with torch.no_grad():
-                for batch in datamodule.val_dataloader():
-                    batch = _move_to_device(batch, device)
-                    features, targets = _split_batch(batch)
-                    outputs = model(features)
-                    loss_result = loss_fn(outputs, targets)
-                    metric_values = metric_fn(outputs, targets)
-                    _accumulate_metrics(
-                        val_aggregates,
-                        {
-                            "loss": _resolve_loss_tensor(loss_result).detach(),
-                            **_as_metric_dict(loss_result),
-                            **_as_metric_dict(metric_values),
-                        },
-                    )
-                    val_steps += 1
+            if hasattr(datamodule, "val_dataloader"):
+                model.eval()
+                with torch.no_grad():
+                    for batch in datamodule.val_dataloader():
+                        batch = _move_to_device(batch, device)
+                        features, targets = _split_batch(batch)
+                        outputs = model(features)
+                        loss_result = loss_fn(outputs, targets)
+                        metric_values = metric_fn(outputs, targets)
+                        _accumulate_metrics(
+                            val_aggregates,
+                            {
+                                "loss": _resolve_loss_tensor(loss_result).detach(),
+                                **_as_metric_dict(loss_result),
+                                **_as_metric_dict(metric_values),
+                            },
+                        )
+                        val_steps += 1
+
+            epoch_metrics = {
+                "epoch": epoch,
+                "train_steps": train_steps,
+                **_prefix_metrics(_average_metrics(train_aggregates, train_steps), "train_"),
+            }
+            if val_steps > 0:
+                epoch_metrics["val_steps"] = val_steps
+                epoch_metrics.update(
+                    _prefix_metrics(_average_metrics(val_aggregates, val_steps), "val_")
+                )
+            epoch_history.append(epoch_metrics)
+            logger.log_metrics(epoch_metrics)
+
+            if stop_training:
+                break
 
         callbacks.on_train_end()
 
-        metrics = {"train_steps": train_steps, **_average_metrics(train_aggregates, train_steps)}
-        if val_steps > 0:
-            metrics["val_steps"] = val_steps
-            metrics.update(
-                {
-                    f"val_{key}": value
-                    for key, value in _average_metrics(val_aggregates, val_steps).items()
-                }
-            )
-        logger.log_metrics(metrics)
-        render_kv_table("Pytorch Trainer Metrics", metrics)
+        final_metrics = dict(epoch_history[-1]) if epoch_history else {"epoch": 0}
+        render_records_table(
+            "Pytorch Epoch Summary",
+            _build_epoch_summary_rows(epoch_history),
+            columns=[
+                ("epoch", "epoch"),
+                ("train_loss", "train/loss"),
+                ("val_loss", "val/loss"),
+                ("train_price_mae", "train/price_mae"),
+                ("val_price_mae", "val/price_mae"),
+                ("train_class_accuracy", "train/accuracy"),
+                ("val_class_accuracy", "val/accuracy"),
+            ],
+        )
+        render_kv_table("Pytorch Trainer Metrics", final_metrics)
 
         run_dir = Path.cwd()
         ensure_dir(run_dir / "artifacts")
         ensure_dir(run_dir / "figures")
         ensure_dir(run_dir / "tables")
-        save_json(metrics, run_dir / "metrics.json")
-        return metrics
+        save_json(epoch_history, run_dir / "epoch_metrics.json")
+        _save_epoch_metrics_csv(epoch_history, run_dir / "tables" / "epoch_metrics.csv")
+        save_json(final_metrics, run_dir / "metrics.json")
+        return final_metrics
 
 
 def _move_to_device(batch, device):
@@ -182,6 +209,43 @@ def _accumulate_metrics(aggregates: dict[str, float], values: dict[str, object])
 
 def _average_metrics(aggregates: dict[str, float], steps: int) -> dict[str, float]:
     return {key: value / max(steps, 1) for key, value in aggregates.items()}
+
+
+def _prefix_metrics(metrics: dict[str, float], prefix: str) -> dict[str, float]:
+    return {f"{prefix}{key}": value for key, value in metrics.items()}
+
+
+def _build_epoch_summary_rows(epoch_history: list[dict[str, float | int]]) -> list[dict[str, float | int | None]]:
+    rows: list[dict[str, float | int | None]] = []
+    for epoch_metrics in epoch_history:
+        rows.append(
+            {
+                "epoch": epoch_metrics.get("epoch"),
+                "train_loss": epoch_metrics.get("train_loss"),
+                "val_loss": epoch_metrics.get("val_loss"),
+                "train_price_mae": epoch_metrics.get("train_price_mae"),
+                "val_price_mae": epoch_metrics.get("val_price_mae"),
+                "train_class_accuracy": epoch_metrics.get("train_class_accuracy"),
+                "val_class_accuracy": epoch_metrics.get("val_class_accuracy"),
+            }
+        )
+    return rows
+
+
+def _save_epoch_metrics_csv(
+    epoch_history: list[dict[str, float | int]],
+    path: Path,
+) -> None:
+    if not epoch_history:
+        return
+
+    fieldnames = sorted({key for row in epoch_history for key in row.keys()})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in epoch_history:
+            writer.writerow(row)
 
 
 def _resolve_device(torch_module, accelerator: str):
