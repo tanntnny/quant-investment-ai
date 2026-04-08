@@ -59,7 +59,11 @@ def render_records_table(
 
 def _format_value(value: Any) -> str:
     if isinstance(value, float):
-        return f"{value:.3f}".rstrip("0").rstrip(".")
+        if value == 0:
+            return "0"
+        if abs(value) >= 1:
+            return f"{value:.3f}".rstrip("0").rstrip(".")
+        return f"{value:.6g}"
     if value is None:
         return "-"
     return str(value)

@@ -1,0 +1,20 @@
+[
+  {
+    "split": "train",
+    "raw_rows": 998,
+    "samples": 625,
+    "tickers": 73
+  },
+  {
+    "split": "val",
+    "raw_rows": 161,
+    "samples": 116,
+    "tickers": 73
+  },
+  {
+    "split": "test",
+    "raw_rows": 280,
+    "samples": 57,
+    "tickers": 79
+  }
+]

@@ -1,0 +1,66 @@
+{
+  "name": "qai_train",
+  "mode": {
+    "name": "train"
+  },
+  "data": {
+    "_target_": "src.datamodules.qai_datamodule.QaiDataModule",
+    "train_path": "data/preprocessed/train.csv",
+    "val_path": "data/preprocessed/val.csv",
+    "test_path": "data/preprocessed/test.csv",
+    "price_history_path": "data/raw/us-shareprices-daily.csv",
+    "sequence_length": 4,
+    "feature_columns": null,
+    "exclude_columns": [
+      "split",
+      "window_ready",
+      "horizon_target_ready",
+      "ticker_history_index"
+    ],
+    "horizons": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "price_field": "Adj. Close",
+    "flat_return_threshold": 0.02,
+    "batch_size": 32,
+    "num_workers": 0
+  },
+  "model": {
+    "_target_": "src.models.qai_attention.QaiAttentionModel",
+    "input_dim": 42,
+    "hidden_dim": 64,
+    "num_heads": 2,
+    "num_layers": 1,
+    "dropout": 0.1,
+    "forecast_horizons": 4,
+    "num_classes": 3,
+    "sequence_length": 4
+  },
+  "loss": {
+    "_target_": "src.losses.qai_multitask.QaiMultiTaskLoss",
+    "regression_weight": 1.0,
+    "classification_weight": 1.0,
+    "regression_loss": "mse"
+  },
+  "metrics": {
+    "_target_": "src.metrics.qai_multitask.QaiMultiTaskMetrics"
+  },
+  "optimizer": {
+    "_target_": "torch.optim.AdamW",
+    "lr": 0.001,
+    "weight_decay": 0.0001
+  },
+  "scheduler": null,
+  "trainer": {
+    "_target_": "src.trainers.pytorch_trainer.PytorchTrainer",
+    "max_epochs": 1,
+    "max_steps": 1,
+    "precision": 32,
+    "accelerator": "auto",
+    "gradient_accumulation_steps": 1,
+    "val_check_interval": 1.0
+  }
+}

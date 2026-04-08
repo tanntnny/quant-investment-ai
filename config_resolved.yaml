@@ -58,8 +58,8 @@ optimizer:
   weight_decay: 0.0001
 trainer:
   _target_: src.trainers.pytorch_trainer.PytorchTrainer
-  max_epochs: 2
-  max_steps: 40
+  max_epochs: 1
+  max_steps: 1
   precision: 32
   accelerator: auto
   gradient_accumulation_steps: 1

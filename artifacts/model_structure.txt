@@ -1,0 +1,1 @@
+QaiAttentionModel(input_dim=42, hidden_dim=64, num_heads=2, num_layers=1, dropout=0.1, forecast_horizons=4, num_classes=3, sequence_length=4)

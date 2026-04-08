@@ -1,0 +1,37 @@
+[
+  {
+    "module": "input_projection",
+    "type": "Linear",
+    "parameters": 2752
+  },
+  {
+    "module": "encoder",
+    "type": "TransformerEncoder",
+    "parameters": 33472
+  },
+  {
+    "module": "pool",
+    "type": "_AttentionPooling",
+    "parameters": 65
+  },
+  {
+    "module": "norm",
+    "type": "LayerNorm",
+    "parameters": 128
+  },
+  {
+    "module": "dropout_layer",
+    "type": "Dropout",
+    "parameters": 0
+  },
+  {
+    "module": "price_head",
+    "type": "Linear",
+    "parameters": 260
+  },
+  {
+    "module": "class_head",
+    "type": "Linear",
+    "parameters": 780
+  }
+]

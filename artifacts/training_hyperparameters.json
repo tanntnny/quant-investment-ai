@@ -1,0 +1,20 @@
+{
+  "experiment": "qai_train",
+  "batch_size": 32,
+  "sequence_length": 4,
+  "feature_dim": 42,
+  "max_epochs": 1,
+  "max_steps": 1,
+  "accelerator": "auto",
+  "precision": 32,
+  "optimizer": "AdamW",
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "loss": "QaiMultiTaskLoss",
+  "regression_loss": "mse",
+  "hidden_dim": 64,
+  "num_heads": 2,
+  "num_layers": 1,
+  "dropout": 0.1,
+  "forecast_horizons": 4
+}

@@ -64,6 +64,10 @@ class PytorchTrainer:
         epoch_history: list[dict[str, float | int]] = []
         total_train_steps = 0
         stop_training = False
+        artifacts_dir = Path.cwd() / "artifacts"
+        ensure_dir(artifacts_dir)
+        best_val_loss = float("inf")
+        best_checkpoint_summary: dict[str, float | int | None] | None = None
 
         for epoch in range(1, self.max_epochs + 1):
             train_aggregates: dict[str, float] = {}
@@ -129,6 +133,29 @@ class PytorchTrainer:
                 )
             epoch_history.append(epoch_metrics)
             logger.log_metrics(epoch_metrics)
+            _save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                epoch_metrics=epoch_metrics,
+                path=artifacts_dir / "last_checkpoint.pt",
+            )
+
+            current_val_loss = epoch_metrics.get("val_loss")
+            if isinstance(current_val_loss, (int, float)) and current_val_loss < best_val_loss:
+                best_val_loss = float(current_val_loss)
+                best_checkpoint_summary = {
+                    "epoch": epoch_metrics.get("epoch"),
+                    "val_loss": current_val_loss,
+                }
+                _save_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    epoch_metrics=epoch_metrics,
+                    path=artifacts_dir / "best_checkpoint.pt",
+                )
+                save_json(epoch_metrics, artifacts_dir / "best_metrics.json")
 
             if stop_training:
                 break
@@ -158,6 +185,8 @@ class PytorchTrainer:
         save_json(epoch_history, run_dir / "epoch_metrics.json")
         _save_epoch_metrics_csv(epoch_history, run_dir / "tables" / "epoch_metrics.csv")
         save_json(final_metrics, run_dir / "metrics.json")
+        if best_checkpoint_summary is not None:
+            save_json(best_checkpoint_summary, run_dir / "artifacts" / "best_checkpoint_summary.json")
         return final_metrics
 
 
@@ -246,6 +275,29 @@ def _save_epoch_metrics_csv(
         writer.writeheader()
         for row in epoch_history:
             writer.writerow(row)
+
+
+def _save_checkpoint(
+    *,
+    model,
+    optimizer,
+    scheduler,
+    epoch_metrics: dict[str, float | int],
+    path: Path,
+) -> None:
+    import torch
+
+    checkpoint = {
+        "epoch": epoch_metrics.get("epoch"),
+        "metrics": epoch_metrics,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict() if hasattr(optimizer, "state_dict") else None,
+        "scheduler_state_dict": scheduler.state_dict()
+        if scheduler is not None and hasattr(scheduler, "state_dict")
+        else None,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(checkpoint, path)
 
 
 def _resolve_device(torch_module, accelerator: str):
