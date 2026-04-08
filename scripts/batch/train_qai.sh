@@ -13,8 +13,18 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="$(cd -- "$SLURM_SUBMIT_DIR" && pwd)"
+else
+  SCRIPT_PATH="${BASH_SOURCE[0]}"
+  if [[ "${SCRIPT_PATH}" != /* ]]; then
+    SCRIPT_PATH="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)/$(basename -- "$SCRIPT_PATH")"
+  fi
+  SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+  REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+fi
+
+cd "$REPO_ROOT"
 
 source "$REPO_ROOT/scripts/slurm/common.sh"
 
