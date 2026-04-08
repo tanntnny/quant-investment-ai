@@ -14,3 +14,14 @@ name: qai_portfolio_train
 trainer:
   max_epochs: 1000
   accelerator: auto
+
+loss:
+  risk_penalty: 0.0
+  concentration_penalty: 0.0
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      loss.risk_penalty: 0.0,0.01,0.1,1
+      loss.concentration_penalty: 0.0,0.01,0.1,1
