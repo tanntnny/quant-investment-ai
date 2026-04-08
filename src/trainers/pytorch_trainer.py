@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.utils.console import announce, render_kv_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
 
@@ -39,10 +40,23 @@ class PytorchTrainer:
         except ImportError as exc:
             raise RuntimeError("PyTorch is required for PytorchTrainer") from exc
 
+        render_kv_table(
+            "Pytorch Trainer Start",
+            {
+                "max_epochs": self.max_epochs,
+                "max_steps": self.max_steps,
+                "precision": self.precision,
+                "accelerator": self.accelerator,
+                "grad_accum_steps": self.gradient_accumulation_steps,
+                "val_check_interval": self.val_check_interval,
+            },
+        )
         device = torch.device(self.accelerator)
         model.to(device)
         if hasattr(datamodule, "setup") and not getattr(datamodule, "samples_by_split", None):
+            announce("Trainer calling datamodule.setup()", style="cyan")
             datamodule.setup()
+        announce("Trainer starting train loop", style="green")
         callbacks.on_train_start()
 
         train_aggregates: dict[str, float] = {}
@@ -109,6 +123,7 @@ class PytorchTrainer:
                 }
             )
         logger.log_metrics(metrics)
+        render_kv_table("Pytorch Trainer Metrics", metrics)
 
         run_dir = Path.cwd()
         ensure_dir(run_dir / "artifacts")
