@@ -66,7 +66,7 @@ class PytorchTrainer:
         stop_training = False
         artifacts_dir = Path.cwd() / "artifacts"
         ensure_dir(artifacts_dir)
-        best_val_loss = float("inf")
+        best_val_regression_loss = float("inf")
         best_checkpoint_summary: dict[str, float | int | None] | None = None
 
         for epoch in range(1, self.max_epochs + 1):
@@ -141,12 +141,16 @@ class PytorchTrainer:
                 path=artifacts_dir / "last_checkpoint.pt",
             )
 
-            current_val_loss = epoch_metrics.get("val_loss")
-            if isinstance(current_val_loss, (int, float)) and current_val_loss < best_val_loss:
-                best_val_loss = float(current_val_loss)
+            current_val_regression_loss = epoch_metrics.get("val_regression_loss")
+            if (
+                isinstance(current_val_regression_loss, (int, float))
+                and current_val_regression_loss < best_val_regression_loss
+            ):
+                best_val_regression_loss = float(current_val_regression_loss)
                 best_checkpoint_summary = {
                     "epoch": epoch_metrics.get("epoch"),
-                    "val_loss": current_val_loss,
+                    "val_regression_loss": current_val_regression_loss,
+                    "val_loss": epoch_metrics.get("val_loss"),
                 }
                 _save_checkpoint(
                     model=model,
