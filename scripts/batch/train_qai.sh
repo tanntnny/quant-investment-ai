@@ -31,12 +31,42 @@ source "$REPO_ROOT/scripts/slurm/common.sh"
 : "${EXPERIMENT_NAME:=qai_train}"
 : "${TRAINER:=pytorch}"
 : "${HYDRA_OVERRIDES:=}"
+export EXPERIMENT_NAME TRAINER REPO_ROOT
+
+log_training_start() {
+  python - <<'PY'
+from datetime import datetime
+import os
+
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
+table = Table(title="QAI Training Start", header_style="bold magenta")
+table.add_column("Field", style="bold cyan", no_wrap=True)
+table.add_column("Value", style="white")
+table.add_row("Timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+table.add_row("Job Name", os.environ.get("SLURM_JOB_NAME", "train-qai"))
+table.add_row("Job ID", os.environ.get("SLURM_JOB_ID", "local"))
+table.add_row("Node List", os.environ.get("SLURM_JOB_NODELIST", "local"))
+table.add_row("Experiment", os.environ["EXPERIMENT_NAME"])
+table.add_row("Trainer", os.environ["TRAINER"])
+table.add_row("Repository", os.environ["REPO_ROOT"])
+table.add_row(
+    "Command",
+    f"python -m src.main experiment={os.environ['EXPERIMENT_NAME']} trainer={os.environ['TRAINER']}",
+)
+console.print(table)
+PY
+}
 
 extra_args=()
 if [[ -n "$HYDRA_OVERRIDES" ]]; then
   # shellcheck disable=SC2206
   extra_args=($HYDRA_OVERRIDES)
 fi
+
+log_training_start
 
 python -m src.main \
   "experiment=${EXPERIMENT_NAME}" \
