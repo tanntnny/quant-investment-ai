@@ -10,3 +10,7 @@ defaults:
   - override /trainer: pytorch
 
 name: qai_train
+
+trainer:
+  max_epochs: 10
+  accelerator: auto

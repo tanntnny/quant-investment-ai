@@ -40,6 +40,7 @@ class PytorchTrainer:
         except ImportError as exc:
             raise RuntimeError("PyTorch is required for PytorchTrainer") from exc
 
+        device = _resolve_device(torch, self.accelerator)
         render_kv_table(
             "Pytorch Trainer Start",
             {
@@ -47,11 +48,11 @@ class PytorchTrainer:
                 "max_steps": self.max_steps,
                 "precision": self.precision,
                 "accelerator": self.accelerator,
+                "device": str(device),
                 "grad_accum_steps": self.gradient_accumulation_steps,
                 "val_check_interval": self.val_check_interval,
             },
         )
-        device = torch.device(self.accelerator)
         model.to(device)
         if hasattr(datamodule, "setup") and not getattr(datamodule, "samples_by_split", None):
             announce("Trainer calling datamodule.setup()", style="cyan")
@@ -181,3 +182,14 @@ def _accumulate_metrics(aggregates: dict[str, float], values: dict[str, object])
 
 def _average_metrics(aggregates: dict[str, float], steps: int) -> dict[str, float]:
     return {key: value / max(steps, 1) for key, value in aggregates.items()}
+
+
+def _resolve_device(torch_module, accelerator: str):
+    normalized = (accelerator or "cpu").strip().lower()
+    if normalized == "auto":
+        return torch_module.device("cuda" if torch_module.cuda.is_available() else "cpu")
+    if normalized == "gpu":
+        normalized = "cuda"
+    if normalized.startswith("cuda") and not torch_module.cuda.is_available():
+        raise RuntimeError("Trainer requested CUDA, but torch.cuda.is_available() is false")
+    return torch_module.device(normalized)

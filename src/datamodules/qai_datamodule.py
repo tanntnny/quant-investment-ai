@@ -81,23 +81,23 @@ def _attach_future_targets(
     if quarter_prices.empty:
         return quarter_prices.copy()
 
-    enriched_frames: list[pd.DataFrame] = []
-    for _, ticker_frame in quarter_prices.groupby("ticker", sort=False):
-        ticker_frame = ticker_frame.sort_values("quarter_end_date").reset_index(drop=True).copy()
-        current_prices = ticker_frame["quarter_price"]
+    enriched = (
+        quarter_prices.sort_values(["ticker", "quarter_end_date"])
+        .reset_index(drop=True)
+        .copy()
+    )
+    grouped_prices = enriched.groupby("ticker", sort=False)["quarter_price"]
 
-        for horizon in horizons:
-            future_prices = current_prices.shift(-horizon)
-            returns = (future_prices - current_prices) / current_prices
-            ticker_frame[f"future_price_t{horizon}"] = future_prices
-            ticker_frame[f"future_return_t{horizon}"] = returns
-            ticker_frame[f"class_target_t{horizon}"] = returns.map(
-                lambda value: _classify_return(value, flat_return_threshold)
-            )
+    for horizon in horizons:
+        future_prices = grouped_prices.shift(-horizon)
+        returns = (future_prices - enriched["quarter_price"]) / enriched["quarter_price"]
+        enriched[f"future_price_t{horizon}"] = future_prices
+        enriched[f"future_return_t{horizon}"] = returns
+        enriched[f"class_target_t{horizon}"] = returns.map(
+            lambda value: _classify_return(value, flat_return_threshold)
+        )
 
-        enriched_frames.append(ticker_frame)
-
-    return pd.concat(enriched_frames, ignore_index=True)
+    return enriched
 
 
 def _classify_return(value: float | None, threshold: float) -> int | None:
