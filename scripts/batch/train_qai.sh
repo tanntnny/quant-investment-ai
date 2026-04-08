@@ -31,6 +31,7 @@ source "$REPO_ROOT/scripts/slurm/common.sh"
 : "${EXPERIMENT_NAME:=qai_train}"
 : "${TRAINER:=pytorch}"
 : "${HYDRA_OVERRIDES:=}"
+: "${RUN_ARTIFACTS_DIR:=saves/run_artifacts/train_qai}"
 export EXPERIMENT_NAME TRAINER REPO_ROOT
 
 log_training_start() {
@@ -72,3 +73,22 @@ python -m src.main \
   "experiment=${EXPERIMENT_NAME}" \
   "trainer=${TRAINER}" \
   "${extra_args[@]}"
+
+mkdir -p "$RUN_ARTIFACTS_DIR"
+
+for artifact_path in \
+  artifacts/best_checkpoint.pt \
+  artifacts/last_checkpoint.pt \
+  artifacts/best_checkpoint_summary.json \
+  artifacts/best_metrics.json \
+  artifacts/data_summary.json \
+  artifacts/model_structure.json \
+  artifacts/model_structure.txt \
+  artifacts/training_hyperparameters.json \
+  artifacts/training_setup.json \
+  epoch_metrics.json
+do
+  if [[ -f "$artifact_path" ]]; then
+    cp "$artifact_path" "$RUN_ARTIFACTS_DIR/$(basename "$artifact_path")"
+  fi
+done
