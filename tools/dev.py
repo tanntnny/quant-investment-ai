@@ -4,6 +4,8 @@
 Examples:
     python tools/dev.py logs latest
     python tools/dev.py logs tail --lines 100
+    python tools/dev.py logs monitor --lines 50 --interval 10
+    python tools/dev.py logs monitor --include-name eval-icnale
 """
 
 from __future__ import annotations
