@@ -1,0 +1,8 @@
+# @package _global_
+
+defaults:
+  - override /mode: prepare_data
+  - override /preparer: qai_preprocess
+  - override /data: qai_preprocess
+
+name: qai_preprocess

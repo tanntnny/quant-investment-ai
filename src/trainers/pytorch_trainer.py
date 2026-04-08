@@ -41,46 +41,73 @@ class PytorchTrainer:
 
         device = torch.device(self.accelerator)
         model.to(device)
-        datamodule.setup()
+        if hasattr(datamodule, "setup") and not getattr(datamodule, "samples_by_split", None):
+            datamodule.setup()
         callbacks.on_train_start()
 
-        total_loss = 0.0
-        total_metric = 0.0
-        total_steps = 0
+        train_aggregates: dict[str, float] = {}
+        val_aggregates: dict[str, float] = {}
+        train_steps = 0
+        val_steps = 0
 
         model.train()
         for _ in range(self.max_epochs):
             for batch in datamodule.train_dataloader():
                 optimizer.zero_grad(set_to_none=True)
-                features, targets = batch
-                features = features.to(device)
-                targets = targets.to(device)
+                batch = _move_to_device(batch, device)
+                features, targets = _split_batch(batch)
                 outputs = model(features)
-                loss = loss_fn(outputs, targets)
+                loss_result = loss_fn(outputs, targets)
+                loss = _resolve_loss_tensor(loss_result)
                 loss.backward()
                 optimizer.step()
                 if scheduler is not None:
                     scheduler.step()
 
                 with torch.no_grad():
-                    metric_value = metric_fn(outputs, targets)
+                    metric_values = metric_fn(outputs, targets)
 
-                total_loss += float(loss.detach().cpu())
-                total_metric += float(metric_value.detach().cpu())
-                total_steps += 1
+                _accumulate_metrics(
+                    train_aggregates,
+                    {"loss": loss.detach(), **_as_metric_dict(loss_result), **_as_metric_dict(metric_values)},
+                )
+                train_steps += 1
 
-                if 0 < self.max_steps <= total_steps:
+                if 0 < self.max_steps <= train_steps:
                     break
-            if 0 < self.max_steps <= total_steps:
+            if 0 < self.max_steps <= train_steps:
                 break
+
+        if hasattr(datamodule, "val_dataloader"):
+            model.eval()
+            with torch.no_grad():
+                for batch in datamodule.val_dataloader():
+                    batch = _move_to_device(batch, device)
+                    features, targets = _split_batch(batch)
+                    outputs = model(features)
+                    loss_result = loss_fn(outputs, targets)
+                    metric_values = metric_fn(outputs, targets)
+                    _accumulate_metrics(
+                        val_aggregates,
+                        {
+                            "loss": _resolve_loss_tensor(loss_result).detach(),
+                            **_as_metric_dict(loss_result),
+                            **_as_metric_dict(metric_values),
+                        },
+                    )
+                    val_steps += 1
 
         callbacks.on_train_end()
 
-        metrics = {
-            "steps": total_steps,
-            "loss": total_loss / max(total_steps, 1),
-            "metric": total_metric / max(total_steps, 1),
-        }
+        metrics = {"train_steps": train_steps, **_average_metrics(train_aggregates, train_steps)}
+        if val_steps > 0:
+            metrics["val_steps"] = val_steps
+            metrics.update(
+                {
+                    f"val_{key}": value
+                    for key, value in _average_metrics(val_aggregates, val_steps).items()
+                }
+            )
         logger.log_metrics(metrics)
 
         run_dir = Path.cwd()
@@ -89,3 +116,53 @@ class PytorchTrainer:
         ensure_dir(run_dir / "tables")
         save_json(metrics, run_dir / "metrics.json")
         return metrics
+
+
+def _move_to_device(batch, device):
+    if isinstance(batch, dict):
+        return {
+            key: value.to(device) if hasattr(value, "to") else value
+            for key, value in batch.items()
+        }
+    if isinstance(batch, (list, tuple)):
+        return type(batch)(_move_to_device(item, device) for item in batch)
+    return batch.to(device) if hasattr(batch, "to") else batch
+
+
+def _split_batch(batch):
+    if isinstance(batch, dict):
+        return batch["features"], batch
+    if isinstance(batch, (list, tuple)) and len(batch) == 2:
+        return batch[0], batch[1]
+    raise TypeError(f"Unsupported batch format: {type(batch)!r}")
+
+
+def _resolve_loss_tensor(loss_result):
+    if isinstance(loss_result, dict):
+        return loss_result["loss"]
+    return loss_result
+
+
+def _as_metric_dict(value):
+    if isinstance(value, dict):
+        return {
+            key: item
+            for key, item in value.items()
+            if key != "loss"
+        }
+    return {"metric": value}
+
+
+def _accumulate_metrics(aggregates: dict[str, float], values: dict[str, object]) -> None:
+    for key, value in values.items():
+        if value is None:
+            continue
+        if hasattr(value, "detach"):
+            value = value.detach().cpu()
+        if hasattr(value, "item"):
+            value = value.item()
+        aggregates[key] = aggregates.get(key, 0.0) + float(value)
+
+
+def _average_metrics(aggregates: dict[str, float], steps: int) -> dict[str, float]:
+    return {key: value / max(steps, 1) for key, value in aggregates.items()}

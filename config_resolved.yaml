@@ -4,7 +4,9 @@ paths:
   data_dir: data
   raw_data_dir: ${paths.data_dir}/raw
   interim_data_dir: ${paths.data_dir}/interim
+  cleaned_data_dir: ${paths.data_dir}/cleaned
   processed_data_dir: ${paths.data_dir}/processed
+  preprocessed_data_dir: ${paths.data_dir}/preprocessed
   reports_dir: reports
   figures_dir: ${paths.reports_dir}/figures
   tables_dir: ${paths.reports_dir}/tables
@@ -12,31 +14,64 @@ paths:
 mode:
   name: train
 data:
-  _target_: src.datamodules.example.ExampleDataModule
-  batch_size: 32
+  _target_: src.datamodules.qai_datamodule.QaiDataModule
+  train_path: data/preprocessed/train.csv
+  val_path: data/preprocessed/val.csv
+  test_path: data/preprocessed/test.csv
+  price_history_path: data/raw/us-shareprices-daily.csv
+  sequence_length: 4
+  feature_columns: null
+  exclude_columns:
+  - split
+  - window_ready
+  - horizon_target_ready
+  - ticker_history_index
+  horizons:
+  - 1
+  - 2
+  - 3
+  - 4
+  price_field: Adj. Close
+  flat_return_threshold: 0.02
+  batch_size: 8
   num_workers: 0
 model:
-  _target_: src.models.example.ExampleModel
-  input_dim: 10
-  hidden_dim: 16
-  output_dim: 1
+  _target_: src.models.qai_attention.QaiAttentionModel
+  input_dim: auto
+  hidden_dim: 64
+  num_heads: 2
+  num_layers: 1
+  dropout: 0.1
+  forecast_horizons: 4
+  num_classes: 3
+  sequence_length: 4
 loss:
-  _target_: src.losses.example.ExampleLoss
+  _target_: src.losses.qai_multitask.QaiMultiTaskLoss
+  regression_weight: 1.0
+  classification_weight: 1.0
+  regression_loss: mse
 metrics:
-  _target_: src.metrics.example.ExampleMetric
+  _target_: src.metrics.qai_multitask.QaiMultiTaskMetrics
 optimizer:
-  _target_: src.optimizers.example.ExampleOptimizer
+  _target_: torch.optim.AdamW
   lr: 0.001
+  weight_decay: 0.0001
 trainer:
+  _target_: src.trainers.pytorch_trainer.PytorchTrainer
   max_epochs: 1
-  max_steps: -1
+  max_steps: 1
   precision: 32
   accelerator: cpu
   gradient_accumulation_steps: 1
   val_check_interval: 1.0
+evaluator:
+  _target_: src.evaluators.simple_evaluator.SimpleEvaluator
+preparer:
+  _target_: src.preparers.simple_preparer.SimplePreparer
+reporter:
+  _target_: src.reporters.simple_reporter.SimpleReporter
 callbacks:
   _target_: src.callbacks.example.ExampleCallbacks
 logger:
   _target_: src.logger.example.ExampleLogger
-experiment:
-  name: baseline
+name: qai_train

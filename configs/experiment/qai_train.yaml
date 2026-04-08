@@ -1,0 +1,12 @@
+# @package _global_
+
+defaults:
+  - override /mode: train
+  - override /data: qai_datamodule
+  - override /model: qai_attention
+  - override /loss: qai_multitask
+  - override /metrics: qai_multitask
+  - override /optimizer: adamw
+  - override /trainer: pytorch
+
+name: qai_train

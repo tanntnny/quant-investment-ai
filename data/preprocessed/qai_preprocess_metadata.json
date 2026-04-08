@@ -1,0 +1,305 @@
+{
+  "fundamental_input_path": "data/cleaned/fundamental.csv",
+  "story_input_path": "data/cleaned/story.csv",
+  "preprocessed_output_path": "data/preprocessed/qai_preprocessed.csv",
+  "rows": 1439,
+  "tickers": 79,
+  "time_ranges": 20,
+  "sequence_length": 4,
+  "time_horizon": 1,
+  "min_sequence_points": 4,
+  "train_ratio": 0.7,
+  "val_ratio": 0.15,
+  "test_ratio": 0.15,
+  "split_boundaries": {
+    "train_end": "2023-09-30",
+    "val_end": "2024-05-31"
+  },
+  "feature_columns": [
+    "piotroski_fscore",
+    "beneish_mscore",
+    "ohlson_oscore",
+    "altman_zscore",
+    "gross_margin",
+    "net_margin",
+    "roa",
+    "asset_turnover",
+    "current_ratio",
+    "debt_to_equity",
+    "fcf_yield",
+    "revenue_growth_yoy",
+    "eps_growth_yoy",
+    "rd_intensity",
+    "capex_to_sales",
+    "pe_ratio",
+    "ps_ratio",
+    "ev_ebitda",
+    "buyback_yield",
+    "story_count",
+    "ticker_sentiment_score",
+    "overall_sentiment_score",
+    "ticker_relevance_score",
+    "bullish_count",
+    "bearish_count",
+    "neutral_count",
+    "topic_relevance_energy_transportation",
+    "topic_relevance_economy_macro",
+    "topic_relevance_finance",
+    "topic_relevance_mergers_and_acquisitions",
+    "topic_relevance_manufacturing",
+    "topic_relevance_life_sciences",
+    "topic_relevance_earnings",
+    "topic_relevance_retail_wholesale",
+    "topic_relevance_financial_markets",
+    "topic_relevance_real_estate",
+    "topic_relevance_technology",
+    "topic_relevance_economy_monetary",
+    "topic_relevance_economy_fiscal",
+    "topic_relevance_blockchain",
+    "topic_relevance_ipo",
+    "ratio_of_bullish_bearish"
+  ],
+  "topic_columns": [
+    "topic_relevance_energy_transportation",
+    "topic_relevance_economy_macro",
+    "topic_relevance_finance",
+    "topic_relevance_mergers_and_acquisitions",
+    "topic_relevance_manufacturing",
+    "topic_relevance_life_sciences",
+    "topic_relevance_earnings",
+    "topic_relevance_retail_wholesale",
+    "topic_relevance_financial_markets",
+    "topic_relevance_real_estate",
+    "topic_relevance_technology",
+    "topic_relevance_economy_monetary",
+    "topic_relevance_economy_fiscal",
+    "topic_relevance_blockchain",
+    "topic_relevance_ipo"
+  ],
+  "splits": {
+    "train": 998,
+    "test": 280,
+    "val": 161
+  },
+  "imputation_strategy": "train_split_median",
+  "standardization_strategy": "train_split_zscore",
+  "imputation_values": {
+    "piotroski_fscore": 5.0,
+    "beneish_mscore": -2.452413413761394,
+    "ohlson_oscore": 0.0004418305723305,
+    "altman_zscore": 0.19597526754797634,
+    "gross_margin": 0.5312599252400381,
+    "net_margin": 0.14187920176274949,
+    "roa": 0.07653665246003666,
+    "asset_turnover": 0.4822135573506977,
+    "current_ratio": 1.2411256100652075,
+    "debt_to_equity": 2.0106070712829522,
+    "fcf_yield": 0.03848219598338875,
+    "revenue_growth_yoy": -0.704084034092296,
+    "eps_growth_yoy": -0.6663503790256498,
+    "rd_intensity": 0.5977917512945929,
+    "capex_to_sales": -0.00796924479027315,
+    "pe_ratio": 0.0909090909090909,
+    "ps_ratio": 0.0,
+    "ev_ebitda": 103.04276301697014,
+    "buyback_yield": 0.029476777474619,
+    "story_count": 0.0,
+    "ticker_sentiment_score": 0.0,
+    "overall_sentiment_score": 0.0,
+    "ticker_relevance_score": 0.0,
+    "bullish_count": 0.0,
+    "bearish_count": 0.0,
+    "neutral_count": 0.0,
+    "topic_relevance_energy_transportation": 0.0,
+    "topic_relevance_economy_macro": 0.0,
+    "topic_relevance_finance": 0.0,
+    "topic_relevance_mergers_and_acquisitions": 0.0,
+    "topic_relevance_manufacturing": 0.0,
+    "topic_relevance_life_sciences": 0.0,
+    "topic_relevance_earnings": 0.0,
+    "topic_relevance_retail_wholesale": 0.0,
+    "topic_relevance_financial_markets": 0.0,
+    "topic_relevance_real_estate": 0.0,
+    "topic_relevance_technology": 0.0,
+    "topic_relevance_economy_monetary": 0.0,
+    "topic_relevance_economy_fiscal": 0.0,
+    "topic_relevance_blockchain": 0.0,
+    "topic_relevance_ipo": 0.0,
+    "ratio_of_bullish_bearish": 0.0
+  },
+  "scaling_stats": {
+    "piotroski_fscore": {
+      "mean": 5.364729458917836,
+      "std": 1.414652239552764
+    },
+    "beneish_mscore": {
+      "mean": -2.433261814682922,
+      "std": 0.21713240720561428
+    },
+    "ohlson_oscore": {
+      "mean": 0.0008385385526957522,
+      "std": 0.0011520487863110516
+    },
+    "altman_zscore": {
+      "mean": 0.22336682492790585,
+      "std": 0.21429284826129658
+    },
+    "gross_margin": {
+      "mean": 0.4984609056448272,
+      "std": 0.2016656175568699
+    },
+    "net_margin": {
+      "mean": 0.16373082282161752,
+      "std": 0.1280661148188104
+    },
+    "roa": {
+      "mean": 0.08882657914760853,
+      "std": 0.07470235559364352
+    },
+    "asset_turnover": {
+      "mean": 0.6494328083846838,
+      "std": 0.5161678809269712
+    },
+    "current_ratio": {
+      "mean": 1.451784929416985,
+      "std": 0.848285941895073
+    },
+    "debt_to_equity": {
+      "mean": 2.8386934303237696,
+      "std": 5.729592819686067
+    },
+    "fcf_yield": {
+      "mean": 0.046117169535349244,
+      "std": 0.046482607722541314
+    },
+    "revenue_growth_yoy": {
+      "mean": -0.7000873267086744,
+      "std": 0.17310162853979266
+    },
+    "eps_growth_yoy": {
+      "mean": -0.5253132953610549,
+      "std": 0.5867408098417247
+    },
+    "rd_intensity": {
+      "mean": 0.41370443966276327,
+      "std": 0.7882098620998732
+    },
+    "capex_to_sales": {
+      "mean": 0.060444942619244636,
+      "std": 1.0457138616770096
+    },
+    "pe_ratio": {
+      "mean": 0.21160607651088614,
+      "std": 0.25973610917934514
+    },
+    "ps_ratio": {
+      "mean": 0.14021141683967334,
+      "std": 0.19727208809701716
+    },
+    "ev_ebitda": {
+      "mean": 140.47287617497906,
+      "std": 315.5151161727838
+    },
+    "buyback_yield": {
+      "mean": 0.03337856863489197,
+      "std": 0.02683959265238066
+    },
+    "story_count": {
+      "mean": 0.3016032064128257,
+      "std": 0.674631521832652
+    },
+    "ticker_sentiment_score": {
+      "mean": 0.034210710654642616,
+      "std": 0.11911697684359895
+    },
+    "overall_sentiment_score": {
+      "mean": 0.03576479166666667,
+      "std": 0.11701054319618925
+    },
+    "ticker_relevance_score": {
+      "mean": 0.16474809645958582,
+      "std": 0.31798808490106334
+    },
+    "bullish_count": {
+      "mean": 0.15731462925851702,
+      "std": 0.5027993811071134
+    },
+    "bearish_count": {
+      "mean": 0.03406813627254509,
+      "std": 0.22122287967503926
+    },
+    "neutral_count": {
+      "mean": 0.11022044088176353,
+      "std": 0.35231236070000443
+    },
+    "topic_relevance_energy_transportation": {
+      "mean": 0.030590650267201067,
+      "std": 0.15265964399653034
+    },
+    "topic_relevance_economy_macro": {
+      "mean": 0.03563770995323982,
+      "std": 0.14584814789393327
+    },
+    "topic_relevance_finance": {
+      "mean": 0.04400227844021377,
+      "std": 0.16979065410880692
+    },
+    "topic_relevance_mergers_and_acquisitions": {
+      "mean": 0.02267555511022044,
+      "std": 0.13136029514594208
+    },
+    "topic_relevance_manufacturing": {
+      "mean": 0.029834708016032063,
+      "std": 0.1459158123250862
+    },
+    "topic_relevance_life_sciences": {
+      "mean": 0.039675020908483634,
+      "std": 0.17822117289417536
+    },
+    "topic_relevance_earnings": {
+      "mean": 0.019968131863727458,
+      "std": 0.12181985014610874
+    },
+    "topic_relevance_retail_wholesale": {
+      "mean": 0.043802695557782226,
+      "std": 0.18154365416391316
+    },
+    "topic_relevance_financial_markets": {
+      "mean": 0.03951797975951904,
+      "std": 0.16959948948054746
+    },
+    "topic_relevance_real_estate": {
+      "mean": 0.010810218603874416,
+      "std": 0.09220506141044638
+    },
+    "topic_relevance_technology": {
+      "mean": 0.07947288600534402,
+      "std": 0.24561795347968599
+    },
+    "topic_relevance_economy_monetary": {
+      "mean": 0.002051218102872411,
+      "std": 0.032717781002283716
+    },
+    "topic_relevance_economy_fiscal": {
+      "mean": 0.008248467100868403,
+      "std": 0.06985258546590568
+    },
+    "topic_relevance_blockchain": {
+      "mean": 0.0029141047094188377,
+      "std": 0.0446954687235198
+    },
+    "topic_relevance_ipo": {
+      "mean": 0.002028204408817635,
+      "std": 0.0401166563379324
+    },
+    "ratio_of_bullish_bearish": {
+      "mean": 15330661.326653307,
+      "std": 50004417.45657302
+    }
+  },
+  "split_output_paths": {
+    "train": "data/preprocessed/train.csv",
+    "val": "data/preprocessed/val.csv",
+    "test": "data/preprocessed/test.csv"
+  }
+}
