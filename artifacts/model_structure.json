@@ -5,14 +5,19 @@
     "parameters": 2752
   },
   {
-    "module": "encoder",
+    "module": "history_encoder",
     "type": "TransformerEncoder",
     "parameters": 33472
   },
   {
-    "module": "pool",
-    "type": "_AttentionPooling",
+    "module": "history_pool",
+    "type": "_MaskedAttentionPooling",
     "parameters": 65
+  },
+  {
+    "module": "ticker_encoder",
+    "type": "TransformerEncoder",
+    "parameters": 33472
   },
   {
     "module": "norm",
@@ -25,13 +30,8 @@
     "parameters": 0
   },
   {
-    "module": "price_head",
+    "module": "score_head",
     "type": "Linear",
-    "parameters": 260
-  },
-  {
-    "module": "class_head",
-    "type": "Linear",
-    "parameters": 780
+    "parameters": 65
   }
 ]

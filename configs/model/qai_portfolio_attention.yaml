@@ -1,0 +1,7 @@
+_target_: src.models.qai_portfolio_attention.QaiPortfolioAttentionModel
+input_dim: auto
+hidden_dim: 64
+num_heads: 4
+num_layers: 1
+dropout: 0.1
+sequence_length: auto

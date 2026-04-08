@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import csv
+import shutil
 from pathlib import Path
 
 from src.utils.console import announce, render_kv_table, render_records_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
+from src.utils.runtime import get_hydra_output_dir
 
 
 class PytorchTrainer:
@@ -64,7 +66,9 @@ class PytorchTrainer:
         epoch_history: list[dict[str, float | int]] = []
         total_train_steps = 0
         stop_training = False
-        artifacts_dir = Path.cwd() / "artifacts"
+        root_run_dir = Path.cwd()
+        output_run_dir = get_hydra_output_dir()
+        artifacts_dir = root_run_dir / "artifacts"
         ensure_dir(artifacts_dir)
         best_val_regression_loss = float("inf")
         best_checkpoint_summary: dict[str, float | int | None] | None = None
@@ -142,6 +146,8 @@ class PytorchTrainer:
             )
 
             current_val_regression_loss = epoch_metrics.get("val_regression_loss")
+            if current_val_regression_loss is None:
+                current_val_regression_loss = epoch_metrics.get("val_loss")
             if (
                 isinstance(current_val_regression_loss, (int, float))
                 and current_val_regression_loss < best_val_regression_loss
@@ -182,15 +188,23 @@ class PytorchTrainer:
         )
         render_kv_table("Pytorch Trainer Metrics", final_metrics)
 
-        run_dir = Path.cwd()
-        ensure_dir(run_dir / "artifacts")
-        ensure_dir(run_dir / "figures")
-        ensure_dir(run_dir / "tables")
-        save_json(epoch_history, run_dir / "epoch_metrics.json")
-        _save_epoch_metrics_csv(epoch_history, run_dir / "tables" / "epoch_metrics.csv")
-        save_json(final_metrics, run_dir / "metrics.json")
-        if best_checkpoint_summary is not None:
-            save_json(best_checkpoint_summary, run_dir / "artifacts" / "best_checkpoint_summary.json")
+        run_dirs = [root_run_dir]
+        if output_run_dir is not None and output_run_dir != root_run_dir:
+            run_dirs.append(output_run_dir)
+        for run_dir in run_dirs:
+            ensure_dir(run_dir / "artifacts")
+            ensure_dir(run_dir / "figures")
+            ensure_dir(run_dir / "tables")
+            save_json(epoch_history, run_dir / "epoch_metrics.json")
+            _save_epoch_metrics_csv(epoch_history, run_dir / "tables" / "epoch_metrics.csv")
+            save_json(final_metrics, run_dir / "metrics.json")
+            if best_checkpoint_summary is not None:
+                save_json(best_checkpoint_summary, run_dir / "artifacts" / "best_checkpoint_summary.json")
+
+        if output_run_dir is not None and output_run_dir != root_run_dir:
+            _copy_if_exists(root_run_dir / "artifacts" / "last_checkpoint.pt", output_run_dir / "artifacts" / "last_checkpoint.pt")
+            _copy_if_exists(root_run_dir / "artifacts" / "best_checkpoint.pt", output_run_dir / "artifacts" / "best_checkpoint.pt")
+            _copy_if_exists(root_run_dir / "artifacts" / "best_metrics.json", output_run_dir / "artifacts" / "best_metrics.json")
         return final_metrics
 
 
@@ -214,8 +228,16 @@ def _split_batch(batch):
 
 
 def _forward_model(model, features, batch):
-    if isinstance(batch, dict) and "attention_mask" in batch:
-        return model(features, attention_mask=batch["attention_mask"])
+    if isinstance(batch, dict):
+        if "history_attention_mask" in batch or "ticker_attention_mask" in batch:
+            model_kwargs = {}
+            if "history_attention_mask" in batch:
+                model_kwargs["history_attention_mask"] = batch["history_attention_mask"]
+            if "ticker_attention_mask" in batch:
+                model_kwargs["ticker_attention_mask"] = batch["ticker_attention_mask"]
+            return model(features, **model_kwargs)
+        if "attention_mask" in batch:
+            return model(features, attention_mask=batch["attention_mask"])
     return model(features)
 
 
@@ -252,6 +274,13 @@ def _average_metrics(aggregates: dict[str, float], steps: int) -> dict[str, floa
 
 def _prefix_metrics(metrics: dict[str, float], prefix: str) -> dict[str, float]:
     return {f"{prefix}{key}": value for key, value in metrics.items()}
+
+
+def _copy_if_exists(source: Path, target: Path) -> None:
+    if not source.exists():
+        return
+    ensure_dir(target.parent)
+    shutil.copy2(source, target)
 
 
 def _build_epoch_summary_rows(epoch_history: list[dict[str, float | int]]) -> list[dict[str, float | int | None]]:

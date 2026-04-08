@@ -14,6 +14,7 @@ from src.pipelines import report as report_pipeline
 from src.pipelines import train as train_pipeline
 from src.utils.git_info import get_git_info
 from src.utils.io import save_json
+from src.utils.runtime import get_hydra_output_dir
 from src.utils.seed import set_seed
 
 def _save_run_artifacts(cfg: DictConfig, run_dir: Path) -> None:
@@ -32,6 +33,10 @@ def _save_run_artifacts(cfg: DictConfig, run_dir: Path) -> None:
 def _resolve_run_dir(cfg: DictConfig) -> Path:
     outputs_dir = Path(cfg.paths.outputs_dir)
     outputs_dir.mkdir(parents=True, exist_ok=True)
+    hydra_output_dir = get_hydra_output_dir()
+    if hydra_output_dir is not None:
+        hydra_output_dir.mkdir(parents=True, exist_ok=True)
+        return hydra_output_dir
     return Path.cwd()
 
 

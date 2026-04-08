@@ -8,6 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.utils.console import announce, render_kv_table, render_records_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
+from src.utils.runtime import get_hydra_output_dir
 
 
 def run(cfg: DictConfig) -> None:
@@ -58,8 +59,13 @@ def run(cfg: DictConfig) -> None:
     logger = instantiate(cfg.logger)
     trainer = instantiate(cfg.trainer)
     run_dir = Path.cwd()
-    ensure_dir(run_dir / "artifacts")
-    ensure_dir(run_dir / "tables")
+    output_run_dir = get_hydra_output_dir()
+    artifact_run_dirs = [run_dir]
+    if output_run_dir is not None and output_run_dir != run_dir:
+        artifact_run_dirs.append(output_run_dir)
+    for artifact_run_dir in artifact_run_dirs:
+        ensure_dir(artifact_run_dir / "artifacts")
+        ensure_dir(artifact_run_dir / "tables")
 
     data_summary_rows = _build_data_summary_rows(datamodule)
     render_records_table(
@@ -100,14 +106,16 @@ def run(cfg: DictConfig) -> None:
         ],
     )
 
-    save_json(data_summary_rows, run_dir / "artifacts" / "data_summary.json")
-    save_json(training_hyperparams, run_dir / "artifacts" / "training_hyperparameters.json")
-    save_json(model_structure_rows, run_dir / "artifacts" / "model_structure.json")
-    save_json(
-        _build_training_setup_payload(cfg=cfg, model_cfg=model_cfg),
-        run_dir / "artifacts" / "training_setup.json",
-    )
-    (run_dir / "artifacts" / "model_structure.txt").write_text(f"{model}\n")
+    training_setup_payload = _build_training_setup_payload(cfg=cfg, model_cfg=model_cfg)
+    for artifact_run_dir in artifact_run_dirs:
+        save_json(data_summary_rows, artifact_run_dir / "artifacts" / "data_summary.json")
+        save_json(training_hyperparams, artifact_run_dir / "artifacts" / "training_hyperparameters.json")
+        save_json(model_structure_rows, artifact_run_dir / "artifacts" / "model_structure.json")
+        save_json(
+            training_setup_payload,
+            artifact_run_dir / "artifacts" / "training_setup.json",
+        )
+        (artifact_run_dir / "artifacts" / "model_structure.txt").write_text(f"{model}\n")
 
     render_kv_table(
         "QAI Trainer Ready",
@@ -164,6 +172,8 @@ def _build_training_hyperparams(
         "batch_size": getattr(datamodule, "batch_size", "-"),
         "min_sequence_length": getattr(datamodule, "min_sequence_length", "-"),
         "max_sequence_length": getattr(datamodule, "max_sequence_length", "-"),
+        "max_tickers_per_sample": getattr(datamodule, "max_tickers_per_sample", "-"),
+        "target_horizon": getattr(datamodule, "target_horizon", "-"),
         "feature_dim": getattr(datamodule, "feature_dim", "-"),
         "max_epochs": trainer_cfg.get("max_epochs"),
         "max_steps": trainer_cfg.get("max_steps"),
@@ -174,6 +184,9 @@ def _build_training_hyperparams(
         "weight_decay": optimizer_cfg.get("weight_decay"),
         "loss": _target_name(loss_cfg),
         "regression_loss": loss_cfg.get("regression_loss"),
+        "use_log_growth": loss_cfg.get("use_log_growth"),
+        "risk_penalty": loss_cfg.get("risk_penalty"),
+        "concentration_penalty": loss_cfg.get("concentration_penalty"),
         "hidden_dim": model_cfg.get("hidden_dim"),
         "num_heads": model_cfg.get("num_heads"),
         "num_layers": model_cfg.get("num_layers"),

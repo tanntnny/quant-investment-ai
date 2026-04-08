@@ -2,21 +2,21 @@
   {
     "split": "train",
     "raw_rows": 998,
-    "samples": 625,
+    "samples": 11,
     "tickers": 73,
     "avg_seq_len": 8.968
   },
   {
     "split": "val",
     "raw_rows": 161,
-    "samples": 116,
+    "samples": 2,
     "tickers": 73,
     "avg_seq_len": 15.293103448275861
   },
   {
     "split": "test",
     "raw_rows": 280,
-    "samples": 57,
+    "samples": 1,
     "tickers": 79,
     "avg_seq_len": 16.789473684210527
   }
