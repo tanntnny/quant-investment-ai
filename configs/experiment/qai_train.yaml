@@ -12,5 +12,5 @@ defaults:
 name: qai_train
 
 trainer:
-  max_epochs: 300
+  max_epochs: 1000
   accelerator: auto
