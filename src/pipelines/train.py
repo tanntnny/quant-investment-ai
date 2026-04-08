@@ -34,6 +34,12 @@ def run(cfg: DictConfig) -> None:
         and hasattr(datamodule, "feature_dim")
     ):
         model_cfg["input_dim"] = datamodule.feature_dim
+    if (
+        isinstance(model_cfg, dict)
+        and model_cfg.get("sequence_length") in {None, "auto"}
+        and hasattr(datamodule, "max_sequence_length")
+    ):
+        model_cfg["sequence_length"] = datamodule.max_sequence_length
     model = instantiate(model_cfg)
     loss_fn = instantiate(cfg.loss)
     metric_fn = instantiate(cfg.metrics)
@@ -64,6 +70,7 @@ def run(cfg: DictConfig) -> None:
             ("raw_rows", "raw_rows"),
             ("samples", "samples"),
             ("tickers", "tickers"),
+            ("avg_seq_len", "avg_seq_len"),
         ],
     )
 
@@ -125,16 +132,18 @@ def run(cfg: DictConfig) -> None:
 
 
 def _build_data_summary_rows(datamodule) -> list[dict[str, int | str]]:
-    rows: list[dict[str, int | str]] = []
+    rows: list[dict[str, int | float | str]] = []
     for split in ("train", "val", "test"):
         split_frame = getattr(datamodule, "split_frames", {}).get(split)
         samples = getattr(datamodule, "samples_by_split", {}).get(split, [])
+        sequence_lengths = getattr(datamodule, "sequence_lengths_by_split", {}).get(split, [])
         rows.append(
             {
                 "split": split,
                 "raw_rows": len(split_frame) if split_frame is not None else 0,
                 "samples": len(samples),
                 "tickers": split_frame["ticker"].nunique() if split_frame is not None else 0,
+                "avg_seq_len": _average_sequence_length(sequence_lengths),
             }
         )
     return rows
@@ -153,7 +162,8 @@ def _build_training_hyperparams(
     return {
         "experiment": cfg.get("name", "train"),
         "batch_size": getattr(datamodule, "batch_size", "-"),
-        "sequence_length": getattr(datamodule, "sequence_length", "-"),
+        "min_sequence_length": getattr(datamodule, "min_sequence_length", "-"),
+        "max_sequence_length": getattr(datamodule, "max_sequence_length", "-"),
         "feature_dim": getattr(datamodule, "feature_dim", "-"),
         "max_epochs": trainer_cfg.get("max_epochs"),
         "max_steps": trainer_cfg.get("max_steps"),
@@ -211,3 +221,9 @@ def _count_parameters(model, *, trainable_only: bool = False) -> int:
 
 def _target_name(config: dict[str, object]) -> str:
     return str(config.get("_target_", "-")).rsplit(".", maxsplit=1)[-1]
+
+
+def _average_sequence_length(sequence_lengths: list[int]) -> float:
+    if not sequence_lengths:
+        return 0.0
+    return sum(sequence_lengths) / len(sequence_lengths)

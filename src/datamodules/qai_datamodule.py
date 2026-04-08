@@ -165,9 +165,12 @@ class QaiDataModule:
     num_workers: int = 0
 
     feature_dim: int = field(init=False, default=0)
+    min_sequence_length: int = field(init=False, default=0)
+    max_sequence_length: int = field(init=False, default=0)
     split_frames: dict[str, pd.DataFrame] = field(init=False, default_factory=dict)
     combined_frame: pd.DataFrame = field(init=False, default_factory=pd.DataFrame)
     samples_by_split: dict[str, list[dict[str, Any]]] = field(init=False, default_factory=dict)
+    sequence_lengths_by_split: dict[str, list[int]] = field(init=False, default_factory=dict)
     feature_names: list[str] = field(init=False, default_factory=list)
 
     def setup(self) -> None:
@@ -219,8 +222,19 @@ class QaiDataModule:
         self.split_frames = split_frames
         self.combined_frame = combined
         self.samples_by_split = samples_by_split
+        self.sequence_lengths_by_split = {
+            split: [int(sample["sequence_length"]) for sample in samples]
+            for split, samples in samples_by_split.items()
+        }
         self.feature_names = feature_names
         self.feature_dim = len(feature_names)
+        self.min_sequence_length = self.sequence_length
+        all_sequence_lengths = [
+            sequence_length
+            for split_lengths in self.sequence_lengths_by_split.values()
+            for sequence_length in split_lengths
+        ]
+        self.max_sequence_length = max(all_sequence_lengths, default=self.sequence_length)
 
     def train_dataloader(self):
         return self._make_dataloader("train", shuffle=True)
@@ -243,8 +257,29 @@ class QaiDataModule:
 
     def _collate_batch(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         torch = self._torch
+        sequence_lengths = torch.tensor(
+            [int(sample["sequence_length"]) for sample in batch],
+            dtype=torch.long,
+        )
+        max_length = int(sequence_lengths.max().item()) if len(batch) > 0 else 0
+        feature_dim = batch[0]["features"].size(-1) if batch else self.feature_dim
+        padded_features = torch.zeros(
+            len(batch),
+            max_length,
+            feature_dim,
+            dtype=torch.float32,
+        )
+        attention_mask = torch.zeros(len(batch), max_length, dtype=torch.bool)
+
+        for idx, sample in enumerate(batch):
+            sample_length = int(sample["sequence_length"])
+            padded_features[idx, :sample_length] = sample["features"]
+            attention_mask[idx, :sample_length] = True
+
         return {
-            "features": torch.stack([sample["features"] for sample in batch], dim=0),
+            "features": padded_features,
+            "attention_mask": attention_mask,
+            "sequence_lengths": sequence_lengths,
             "price_targets": torch.stack(
                 [sample["price_targets"] for sample in batch], dim=0
             ),
@@ -288,7 +323,7 @@ def _build_samples_by_split(
             if row[required_class_columns].isna().any():
                 continue
 
-            window = ticker_frame.iloc[end_idx - sequence_length + 1 : end_idx + 1]
+            window = ticker_frame.iloc[: end_idx + 1]
             features = torch.tensor(
                 window.loc[:, feature_columns].to_numpy(dtype="float32"),
                 dtype=torch.float32,
@@ -310,6 +345,7 @@ def _build_samples_by_split(
                     "ticker": str(row["ticker"]),
                     "time_range": str(row["time_range"]),
                     "quarter_end_date": row["quarter_end_date"],
+                    "sequence_length": len(window),
                 }
             )
 

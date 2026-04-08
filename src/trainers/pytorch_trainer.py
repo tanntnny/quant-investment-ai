@@ -80,7 +80,7 @@ class PytorchTrainer:
                 optimizer.zero_grad(set_to_none=True)
                 batch = _move_to_device(batch, device)
                 features, targets = _split_batch(batch)
-                outputs = model(features)
+                outputs = _forward_model(model, features, batch)
                 loss_result = loss_fn(outputs, targets)
                 loss = _resolve_loss_tensor(loss_result)
                 loss.backward()
@@ -108,7 +108,7 @@ class PytorchTrainer:
                     for batch in datamodule.val_dataloader():
                         batch = _move_to_device(batch, device)
                         features, targets = _split_batch(batch)
-                        outputs = model(features)
+                        outputs = _forward_model(model, features, batch)
                         loss_result = loss_fn(outputs, targets)
                         metric_values = metric_fn(outputs, targets)
                         _accumulate_metrics(
@@ -207,6 +207,12 @@ def _split_batch(batch):
     if isinstance(batch, (list, tuple)) and len(batch) == 2:
         return batch[0], batch[1]
     raise TypeError(f"Unsupported batch format: {type(batch)!r}")
+
+
+def _forward_model(model, features, batch):
+    if isinstance(batch, dict) and "attention_mask" in batch:
+        return model(features, attention_mask=batch["attention_mask"])
+    return model(features)
 
 
 def _resolve_loss_tensor(loss_result):
