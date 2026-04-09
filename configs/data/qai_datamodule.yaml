@@ -10,7 +10,7 @@ exclude_columns:
   - window_ready
   - horizon_target_ready
   - ticker_history_index
-horizons: [1, 2, 3, 4]
+horizons: [1]
 price_field: Adj. Close
 flat_return_threshold: 0.02
 batch_size: 32

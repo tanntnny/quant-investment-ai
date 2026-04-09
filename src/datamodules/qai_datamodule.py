@@ -24,6 +24,10 @@ def _load_split_frame(path: str | Path, split_name: str) -> pd.DataFrame:
     frame["split"] = split_name
     frame["quarter_end_date"] = pd.to_datetime(frame["quarter_end_date"], errors="coerce")
     frame = frame.dropna(subset=["ticker", "quarter_end_date"]).copy()
+    # Canonicalize to calendar quarter end so all joins/targets are aligned at decision time t.
+    frame["quarter_end_date"] = (
+        frame["quarter_end_date"].dt.to_period("Q").dt.end_time.dt.normalize()
+    )
     frame["ticker"] = frame["ticker"].astype(str)
     frame["time_range"] = frame["time_range"].astype(str)
     return frame
@@ -86,10 +90,25 @@ def _attach_future_targets(
         .reset_index(drop=True)
         .copy()
     )
-    grouped_prices = enriched.groupby("ticker", sort=False)["quarter_price"]
-
     for horizon in horizons:
-        future_prices = grouped_prices.shift(-horizon)
+        target_dates = (
+            enriched["quarter_end_date"] + pd.offsets.QuarterEnd(horizon)
+        ).dt.normalize()
+        enriched[f"future_quarter_end_date_t{horizon}"] = target_dates
+
+        lookup = enriched.loc[:, ["ticker", "quarter_end_date", "quarter_price"]].rename(
+            columns={
+                "quarter_end_date": f"future_quarter_end_date_t{horizon}",
+                "quarter_price": f"future_price_t{horizon}",
+            }
+        )
+        keys = enriched.loc[:, ["ticker", f"future_quarter_end_date_t{horizon}"]]
+        future_prices = keys.merge(
+            lookup,
+            how="left",
+            on=["ticker", f"future_quarter_end_date_t{horizon}"],
+        )[f"future_price_t{horizon}"]
+
         returns = (future_prices - enriched["quarter_price"]) / enriched["quarter_price"]
         enriched[f"future_price_t{horizon}"] = future_prices
         enriched[f"future_return_t{horizon}"] = returns
@@ -323,7 +342,8 @@ def _build_samples_by_split(
             if row[required_class_columns].isna().any():
                 continue
 
-            window = ticker_frame.iloc[: end_idx + 1]
+            start_idx = end_idx - sequence_length + 1
+            window = ticker_frame.iloc[start_idx : end_idx + 1]
             features = torch.tensor(
                 window.loc[:, feature_columns].to_numpy(dtype="float32"),
                 dtype=torch.float32,

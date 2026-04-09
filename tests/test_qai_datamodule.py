@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from src.datamodules.qai_datamodule import (
     QaiDataModule,
     _align_quarter_close_prices,
     _attach_future_targets,
+    _load_split_frame,
     _load_price_history,
 )
 from tests.qai_fixtures import build_qai_fixture
@@ -32,6 +35,43 @@ def test_future_target_generation_and_class_boundaries(tmp_path: Path) -> None:
     assert first["class_target_t2"] == 1
     assert first["class_target_t3"] == 1
     assert first["class_target_t4"] == 1
+
+
+def test_future_target_t1_requires_exact_next_quarter(tmp_path: Path) -> None:
+    prices_path = tmp_path / "prices_gap.csv"
+    # Missing 2020-Q2 on purpose.
+    pd.DataFrame(
+        [
+            {"Ticker": "AAA", "Date": "2020-03-31", "Adj. Close": 100.0},
+            {"Ticker": "AAA", "Date": "2020-09-30", "Adj. Close": 110.0},
+            {"Ticker": "AAA", "Date": "2020-12-31", "Adj. Close": 120.0},
+        ]
+    ).to_csv(prices_path, index=False, sep=";")
+
+    aligned = _align_quarter_close_prices(_load_price_history(prices_path))
+    targets = _attach_future_targets(aligned, horizons=[1], flat_return_threshold=0.02)
+
+    first = targets.iloc[0]
+    # t=2020-03-31 should target 2020-06-30 exactly; because it's missing, future target stays NaN.
+    assert pd.isna(first["future_price_t1"])
+    assert pd.isna(first["future_return_t1"])
+    assert pd.isna(first["class_target_t1"])
+
+
+def test_split_frame_quarter_end_is_canonicalized(tmp_path: Path) -> None:
+    split_path = tmp_path / "split.csv"
+    pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "time_range": "q4y2023",
+                "quarter_end_date": "2023-10-31",
+            }
+        ]
+    ).to_csv(split_path, index=False)
+
+    frame = _load_split_frame(split_path, "val")
+    assert frame["quarter_end_date"].iloc[0] == pd.Timestamp("2023-12-31")
 
 
 def test_qai_datamodule_builds_sequences_and_filters_missing_horizons(tmp_path: Path) -> None:

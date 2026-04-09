@@ -63,5 +63,5 @@ def test_pytorch_trainer_qai_smoke(tmp_path: Path) -> None:
     )
 
     assert metrics["train_steps"] == 1
-    assert "loss" in metrics
+    assert "train_loss" in metrics
     assert "val_loss" in metrics

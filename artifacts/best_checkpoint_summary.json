@@ -1,5 +1,5 @@
 {
   "epoch": 1,
-  "val_regression_loss": -0.223933145403862,
-  "val_loss": -0.223933145403862
+  "val_regression_loss": 10407.775390625,
+  "val_loss": 10409.1923828125
 }

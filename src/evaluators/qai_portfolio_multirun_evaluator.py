@@ -314,6 +314,9 @@ class QaiPortfolioMultirunEvaluator:
                         equal_weights = np.full(ticker_count, 1.0 / ticker_count, dtype=float)
                         tickers = list(batch["tickers"][sample_idx])[:ticker_count]
                         quarter_end_date = pd.Timestamp(batch["quarter_end_date"][sample_idx]).normalize()
+                        future_quarter_end_date = pd.Timestamp(
+                            batch["future_quarter_end_date"][sample_idx]
+                        ).normalize()
                         time_range = str(batch["time_range"][sample_idx])
 
                         weighted_current = float(np.sum(valid_weights * valid_current))
@@ -335,6 +338,7 @@ class QaiPortfolioMultirunEvaluator:
                                 "sample_key": sample_key,
                                 "time_range": time_range,
                                 "quarter_end_date": quarter_end_date,
+                                "future_quarter_end_date": future_quarter_end_date,
                                 "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
                                 "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
                                 "ticker_count": ticker_count,
@@ -365,6 +369,7 @@ class QaiPortfolioMultirunEvaluator:
                                     "sample_key": sample_key,
                                     "time_range": time_range,
                                     "quarter_end_date": quarter_end_date,
+                                    "future_quarter_end_date": future_quarter_end_date,
                                     "ticker": str(ticker),
                                     "weight": float(weight),
                                     "equal_weight": float(equal_weight),
@@ -474,7 +479,7 @@ class QaiPortfolioMultirunEvaluator:
         quarter_prices = _align_quarter_close_prices(price_history, price_field="Adj. Close")
         targets = _attach_future_targets(
             quarter_prices,
-            horizons=[1, 2, 3, 4],
+            horizons=[1],
             flat_return_threshold=0.02,
         )
         merged = val_split.merge(targets, how="left", on=["ticker", "quarter_end_date", "time_range"])
@@ -483,7 +488,6 @@ class QaiPortfolioMultirunEvaluator:
             .agg(
                 tickers=("ticker", "size"),
                 quarter_price_nonnull=("quarter_price", lambda s: int(s.notna().sum())),
-                future_price_t4_nonnull=("future_price_t4", lambda s: int(s.notna().sum())),
                 future_price_t1_nonnull=("future_price_t1", lambda s: int(s.notna().sum())),
             )
             .sort_values("quarter_end_date")

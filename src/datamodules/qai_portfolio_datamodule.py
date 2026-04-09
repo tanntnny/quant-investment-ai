@@ -170,6 +170,7 @@ class QaiPortfolioDataModule:
         ticker_lists: list[list[str]] = []
         time_ranges: list[str] = []
         quarter_end_dates: list[pd.Timestamp] = []
+        future_quarter_end_dates: list[pd.Timestamp] = []
 
         for batch_idx, sample in enumerate(batch):
             ticker_count = int(sample["ticker_count"])
@@ -180,6 +181,7 @@ class QaiPortfolioDataModule:
             ticker_lists.append(list(sample["tickers"]))
             time_ranges.append(str(sample["time_range"]))
             quarter_end_dates.append(sample["quarter_end_date"])
+            future_quarter_end_dates.append(sample["future_quarter_end_date"])
 
             for ticker_idx in range(ticker_count):
                 sample_length = int(sample["sequence_lengths"][ticker_idx])
@@ -195,6 +197,7 @@ class QaiPortfolioDataModule:
             "tickers": ticker_lists,
             "time_range": time_ranges,
             "quarter_end_date": quarter_end_dates,
+            "future_quarter_end_date": future_quarter_end_dates,
             "sequence_lengths": sequence_lengths,
             "ticker_count": torch.tensor([len(tickers) for tickers in ticker_lists], dtype=torch.long),
         }
@@ -214,6 +217,7 @@ def _build_portfolio_samples_by_split(
 
     samples_by_split = {"train": [], "val": [], "test": []}
     future_price_column = f"future_price_t{target_horizon}"
+    future_quarter_end_date_column = f"future_quarter_end_date_t{target_horizon}"
 
     combined_by_ticker = {
         ticker: ticker_frame.sort_values("quarter_end_date").reset_index(drop=True).copy()
@@ -225,6 +229,7 @@ def _build_portfolio_samples_by_split(
             split_frame["window_ready"].fillna(False)
             & split_frame["horizon_target_ready"].fillna(False)
             & split_frame[future_price_column].notna()
+            & split_frame[future_quarter_end_date_column].notna()
             & split_frame["quarter_price"].notna()
         ].copy()
 
@@ -239,7 +244,7 @@ def _build_portfolio_samples_by_split(
                 ].copy()
                 if len(history) < sequence_length:
                     continue
-                history = history.tail(len(history))
+                history = history.tail(sequence_length)
                 feature_array = history.loc[:, feature_columns].to_numpy(dtype="float32")
                 ticker_records.append(
                     {
@@ -248,6 +253,9 @@ def _build_portfolio_samples_by_split(
                         "features": torch.tensor(feature_array, dtype=torch.float32),
                         "current_price": float(row.quarter_price),
                         "future_price": float(getattr(row, future_price_column)),
+                        "future_quarter_end_date": pd.Timestamp(
+                            getattr(row, future_quarter_end_date_column)
+                        ),
                     }
                 )
 
@@ -261,6 +269,7 @@ def _build_portfolio_samples_by_split(
             tickers: list[str] = []
             current_prices: list[float] = []
             future_prices: list[float] = []
+            future_quarter_end_dates: list[pd.Timestamp] = []
 
             for ticker_idx, record in enumerate(ticker_records):
                 seq_len = int(record["sequence_length"])
@@ -269,6 +278,13 @@ def _build_portfolio_samples_by_split(
                 tickers.append(record["ticker"])
                 current_prices.append(record["current_price"])
                 future_prices.append(record["future_price"])
+                future_quarter_end_dates.append(record["future_quarter_end_date"])
+
+            unique_future_dates = sorted({pd.Timestamp(value) for value in future_quarter_end_dates})
+            if len(unique_future_dates) != 1:
+                raise ValueError(
+                    "Portfolio sample contains mixed future target dates; expected a single t+horizon date."
+                )
 
             samples_by_split[str(split)].append(
                 {
@@ -280,6 +296,7 @@ def _build_portfolio_samples_by_split(
                     "future_prices": torch.tensor(future_prices, dtype=torch.float32),
                     "time_range": str(time_range),
                     "quarter_end_date": pd.Timestamp(quarter_end_date),
+                    "future_quarter_end_date": unique_future_dates[0],
                 }
             )
 
