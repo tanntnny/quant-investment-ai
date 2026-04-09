@@ -1,0 +1,440 @@
+{
+  "multirun_root": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio",
+  "run_eval_output_dir": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs",
+  "top_runs_from_val": [
+    10,
+    9,
+    14,
+    7,
+    12
+  ],
+  "validation_diagnostics": {
+    "raw_row_groups": [
+      {
+        "time_range": "q4y2023",
+        "quarter_end_date": "2023-10-31T00:00:00",
+        "ticker_count": 9
+      },
+      {
+        "time_range": "q4y2023",
+        "quarter_end_date": "2023-11-30T00:00:00",
+        "ticker_count": 6
+      },
+      {
+        "time_range": "q4y2023",
+        "quarter_end_date": "2023-12-31T00:00:00",
+        "ticker_count": 58
+      },
+      {
+        "time_range": "q1y2024",
+        "quarter_end_date": "2024-01-31T00:00:00",
+        "ticker_count": 9
+      },
+      {
+        "time_range": "q1y2024",
+        "quarter_end_date": "2024-02-29T00:00:00",
+        "ticker_count": 6
+      },
+      {
+        "time_range": "q1y2024",
+        "quarter_end_date": "2024-03-31T00:00:00",
+        "ticker_count": 58
+      },
+      {
+        "time_range": "q2y2024",
+        "quarter_end_date": "2024-04-30T00:00:00",
+        "ticker_count": 9
+      },
+      {
+        "time_range": "q2y2024",
+        "quarter_end_date": "2024-05-31T00:00:00",
+        "ticker_count": 6
+      }
+    ],
+    "target_availability": [
+      {
+        "time_range": "q4y2023",
+        "quarter_end_date": "2023-10-31T00:00:00",
+        "tickers": 9,
+        "quarter_price_nonnull": 0,
+        "future_price_t4_nonnull": 0,
+        "future_price_t1_nonnull": 0
+      },
+      {
+        "time_range": "q4y2023",
+        "quarter_end_date": "2023-11-30T00:00:00",
+        "tickers": 6,
+        "quarter_price_nonnull": 0,
+        "future_price_t4_nonnull": 0,
+        "future_price_t1_nonnull": 0
+      },
+      {
+        "time_range": "q4y2023",
+        "quarter_end_date": "2023-12-31T00:00:00",
+        "tickers": 58,
+        "quarter_price_nonnull": 58,
+        "future_price_t4_nonnull": 58,
+        "future_price_t1_nonnull": 58
+      },
+      {
+        "time_range": "q1y2024",
+        "quarter_end_date": "2024-01-31T00:00:00",
+        "tickers": 9,
+        "quarter_price_nonnull": 0,
+        "future_price_t4_nonnull": 0,
+        "future_price_t1_nonnull": 0
+      },
+      {
+        "time_range": "q1y2024",
+        "quarter_end_date": "2024-02-29T00:00:00",
+        "tickers": 6,
+        "quarter_price_nonnull": 0,
+        "future_price_t4_nonnull": 0,
+        "future_price_t1_nonnull": 0
+      },
+      {
+        "time_range": "q1y2024",
+        "quarter_end_date": "2024-03-31T00:00:00",
+        "tickers": 58,
+        "quarter_price_nonnull": 58,
+        "future_price_t4_nonnull": 58,
+        "future_price_t1_nonnull": 58
+      },
+      {
+        "time_range": "q2y2024",
+        "quarter_end_date": "2024-04-30T00:00:00",
+        "tickers": 9,
+        "quarter_price_nonnull": 0,
+        "future_price_t4_nonnull": 0,
+        "future_price_t1_nonnull": 0
+      },
+      {
+        "time_range": "q2y2024",
+        "quarter_end_date": "2024-05-31T00:00:00",
+        "tickers": 6,
+        "quarter_price_nonnull": 0,
+        "future_price_t4_nonnull": 0,
+        "future_price_t1_nonnull": 0
+      }
+    ],
+    "portfolio_sample_counts": [
+      {
+        "split": "train",
+        "portfolio_samples": 11,
+        "sample_dates": "2021-03-31, 2021-06-30, 2021-09-30, 2021-12-31, 2022-03-31, 2022-06-30, 2022-09-30, 2022-12-31, 2023-03-31, 2023-06-30, 2023-09-30"
+      },
+      {
+        "split": "val",
+        "portfolio_samples": 2,
+        "sample_dates": "2023-12-31, 2024-03-31"
+      },
+      {
+        "split": "test",
+        "portfolio_samples": 1,
+        "sample_dates": "2024-06-30"
+      }
+    ]
+  },
+  "scopes": {
+    "val": {
+      "run_count": 16,
+      "sample_count": 32,
+      "dates": [
+        "2023-12-31",
+        "2024-03-31"
+      ],
+      "top_strategies": [
+        {
+          "evaluation_scope": "val",
+          "run_id": 10,
+          "risk_penalty": 0.1,
+          "concentration_penalty": 0.1,
+          "best_epoch": 381,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.4539756774902344,
+          "saved_best_val_effective_holdings": 1.8203829526901245,
+          "saved_final_val_growth_alpha": 0.4148731827735901,
+          "saved_final_val_effective_holdings": 1.651458740234375,
+          "strategy_label": "run 10 | risk=0.1 | conc=0.1",
+          "sample_count": 2,
+          "portfolio_growth_mean": 1.6323263634216705,
+          "benchmark_growth_mean": 1.1783450900304464,
+          "growth_alpha_mean": 0.4539812733912242,
+          "max_weight_mean": 0.7283425746115445,
+          "effective_holdings_mean": 1.8203420095469456,
+          "ticker_count_mean": 58.0,
+          "cumulative_growth": 2.637347379534486,
+          "benchmark_cumulative_growth": 1.3863735477980401,
+          "cumulative_alpha": 1.250973831736446
+        },
+        {
+          "evaluation_scope": "val",
+          "run_id": 9,
+          "risk_penalty": 0.1,
+          "concentration_penalty": 0.01,
+          "best_epoch": 1000,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.38449329137802124,
+          "saved_best_val_effective_holdings": 1.000014305114746,
+          "saved_final_val_growth_alpha": 0.38449329137802124,
+          "saved_final_val_effective_holdings": 1.000014305114746,
+          "strategy_label": "run 9 | risk=0.1 | conc=0.01",
+          "sample_count": 2,
+          "portfolio_growth_mean": 1.5628383299717048,
+          "benchmark_growth_mean": 1.1783450900304464,
+          "growth_alpha_mean": 0.3844932399412584,
+          "max_weight_mean": 0.9999928388383406,
+          "effective_holdings_mean": 1.00001432247762,
+          "ticker_count_mean": 58.0,
+          "cumulative_growth": 2.4291699176341157,
+          "benchmark_cumulative_growth": 1.3863735477980401,
+          "cumulative_alpha": 1.0427963698360756
+        },
+        {
+          "evaluation_scope": "val",
+          "run_id": 14,
+          "risk_penalty": 1.0,
+          "concentration_penalty": 0.1,
+          "best_epoch": 124,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.3364427089691162,
+          "saved_best_val_effective_holdings": 1.8367314338684082,
+          "saved_final_val_growth_alpha": 0.3482375144958496,
+          "saved_final_val_effective_holdings": 1.513719081878662,
+          "strategy_label": "run 14 | risk=1.0 | conc=0.1",
+          "sample_count": 2,
+          "portfolio_growth_mean": 1.5147996770143894,
+          "benchmark_growth_mean": 1.1783450900304464,
+          "growth_alpha_mean": 0.33645458698394304,
+          "max_weight_mean": 0.7017478525270797,
+          "effective_holdings_mean": 1.8363964285868977,
+          "ticker_count_mean": 58.0,
+          "cumulative_growth": 2.283402272144925,
+          "benchmark_cumulative_growth": 1.3863735477980401,
+          "cumulative_alpha": 0.8970287243468849
+        },
+        {
+          "evaluation_scope": "val",
+          "run_id": 7,
+          "risk_penalty": 0.01,
+          "concentration_penalty": 1.0,
+          "best_epoch": 826,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.27835994958877563,
+          "saved_best_val_effective_holdings": 6.705690383911133,
+          "saved_final_val_growth_alpha": 0.22018462419509888,
+          "saved_final_val_effective_holdings": 6.750130653381348,
+          "strategy_label": "run 7 | risk=0.01 | conc=1.0",
+          "sample_count": 2,
+          "portfolio_growth_mean": 1.4567463746248936,
+          "benchmark_growth_mean": 1.1783450900304464,
+          "growth_alpha_mean": 0.27840128459444735,
+          "max_weight_mean": 0.21975161352158257,
+          "effective_holdings_mean": 6.7036620275506795,
+          "ticker_count_mean": 58.0,
+          "cumulative_growth": 2.1038499854156805,
+          "benchmark_cumulative_growth": 1.3863735477980401,
+          "cumulative_alpha": 0.7174764376176404
+        },
+        {
+          "evaluation_scope": "val",
+          "run_id": 12,
+          "risk_penalty": 1.0,
+          "concentration_penalty": 0.0,
+          "best_epoch": 994,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.24750781059265137,
+          "saved_best_val_effective_holdings": 1.000046730041504,
+          "saved_final_val_growth_alpha": 0.24750763177871704,
+          "saved_final_val_effective_holdings": 1.0000461339950562,
+          "strategy_label": "run 12 | risk=1.0 | conc=0.0",
+          "sample_count": 2,
+          "portfolio_growth_mean": 1.4258525955476842,
+          "benchmark_growth_mean": 1.1783450900304464,
+          "growth_alpha_mean": 0.24750750551723788,
+          "max_weight_mean": 0.9999766389257162,
+          "effective_holdings_mean": 1.0000467239565667,
+          "ticker_count_mean": 58.0,
+          "cumulative_growth": 1.9780076001823739,
+          "benchmark_cumulative_growth": 1.3863735477980401,
+          "cumulative_alpha": 0.5916340523843338
+        }
+      ],
+      "benchmark_terminal_nav": 1.3863735477980401,
+      "outputs": {
+        "multirun_root": {
+          "run_summary": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_run_summary_val.csv",
+          "sample_weights": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_sample_weights_val.csv",
+          "growth_by_quarter": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_top5_growth_by_quarter_val.csv",
+          "top5_allocations": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_top5_allocations_val.csv",
+          "top_holdings_prices": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_top5_top_holdings_prices_val.csv",
+          "growth_plot": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_growth_val.png"
+        },
+        "run_dir": {
+          "run_summary": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_run_summary_val.csv",
+          "sample_weights": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_sample_weights_val.csv",
+          "growth_by_quarter": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_top5_growth_by_quarter_val.csv",
+          "top5_allocations": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_top5_allocations_val.csv",
+          "top_holdings_prices": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_top5_top_holdings_prices_val.csv",
+          "growth_plot": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_growth_val.png"
+        }
+      }
+    },
+    "all": {
+      "run_count": 16,
+      "sample_count": 224,
+      "dates": [
+        "2021-03-31",
+        "2021-06-30",
+        "2021-09-30",
+        "2021-12-31",
+        "2022-03-31",
+        "2022-06-30",
+        "2022-09-30",
+        "2022-12-31",
+        "2023-03-31",
+        "2023-06-30",
+        "2023-09-30",
+        "2023-12-31",
+        "2024-03-31",
+        "2024-06-30"
+      ],
+      "top_strategies": [
+        {
+          "evaluation_scope": "all",
+          "run_id": 12,
+          "risk_penalty": 1.0,
+          "concentration_penalty": 0.0,
+          "best_epoch": 994,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.24750781059265137,
+          "saved_best_val_effective_holdings": 1.000046730041504,
+          "saved_final_val_growth_alpha": 0.24750763177871704,
+          "saved_final_val_effective_holdings": 1.0000461339950562,
+          "strategy_label": "run 12 | risk=1.0 | conc=0.0",
+          "sample_count": 14,
+          "portfolio_growth_mean": 1.7590917971903839,
+          "benchmark_growth_mean": 1.1176759643041432,
+          "growth_alpha_mean": 0.6414158328862409,
+          "max_weight_mean": 0.9999872821266523,
+          "effective_holdings_mean": 1.0000254371745378,
+          "ticker_count_mean": 57.0,
+          "cumulative_growth": 1712.2043952952877,
+          "benchmark_cumulative_growth": 3.981414409902108,
+          "cumulative_alpha": 1708.2229808853856
+        },
+        {
+          "evaluation_scope": "all",
+          "run_id": 2,
+          "risk_penalty": 0.0,
+          "concentration_penalty": 0.1,
+          "best_epoch": 557,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.2222071886062622,
+          "saved_best_val_effective_holdings": 1.7573612928390503,
+          "saved_final_val_growth_alpha": 0.17310458421707153,
+          "saved_final_val_effective_holdings": 2.0494742393493652,
+          "strategy_label": "run 2 | risk=0.0 | conc=0.1",
+          "sample_count": 14,
+          "portfolio_growth_mean": 1.7475897621002134,
+          "benchmark_growth_mean": 1.1176759643041432,
+          "growth_alpha_mean": 0.62991379779607,
+          "max_weight_mean": 0.770868772200895,
+          "effective_holdings_mean": 1.6039001007571656,
+          "ticker_count_mean": 57.0,
+          "cumulative_growth": 1550.0394912228003,
+          "benchmark_cumulative_growth": 3.981414409902108,
+          "cumulative_alpha": 1546.0580768128982
+        },
+        {
+          "evaluation_scope": "all",
+          "run_id": 10,
+          "risk_penalty": 0.1,
+          "concentration_penalty": 0.1,
+          "best_epoch": 381,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.4539756774902344,
+          "saved_best_val_effective_holdings": 1.8203829526901245,
+          "saved_final_val_growth_alpha": 0.4148731827735901,
+          "saved_final_val_effective_holdings": 1.651458740234375,
+          "strategy_label": "run 10 | risk=0.1 | conc=0.1",
+          "sample_count": 14,
+          "portfolio_growth_mean": 1.727727745702979,
+          "benchmark_growth_mean": 1.1176759643041432,
+          "growth_alpha_mean": 0.6100517813988355,
+          "max_weight_mean": 0.6456802419463986,
+          "effective_holdings_mean": 2.0991374388135013,
+          "ticker_count_mean": 57.0,
+          "cumulative_growth": 1538.9716273661022,
+          "benchmark_cumulative_growth": 3.981414409902108,
+          "cumulative_alpha": 1534.9902129562001
+        },
+        {
+          "evaluation_scope": "all",
+          "run_id": 7,
+          "risk_penalty": 0.01,
+          "concentration_penalty": 1.0,
+          "best_epoch": 826,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.27835994958877563,
+          "saved_best_val_effective_holdings": 6.705690383911133,
+          "saved_final_val_growth_alpha": 0.22018462419509888,
+          "saved_final_val_effective_holdings": 6.750130653381348,
+          "strategy_label": "run 7 | risk=0.01 | conc=1.0",
+          "sample_count": 14,
+          "portfolio_growth_mean": 1.6720404607351642,
+          "benchmark_growth_mean": 1.1176759643041432,
+          "growth_alpha_mean": 0.5543644964310206,
+          "max_weight_mean": 0.2526018720062803,
+          "effective_holdings_mean": 6.952275016446168,
+          "ticker_count_mean": 57.0,
+          "cumulative_growth": 861.4472415885325,
+          "benchmark_cumulative_growth": 3.981414409902108,
+          "cumulative_alpha": 857.4658271786304
+        },
+        {
+          "evaluation_scope": "all",
+          "run_id": 3,
+          "risk_penalty": 0.0,
+          "concentration_penalty": 1.0,
+          "best_epoch": 721,
+          "final_epoch": 1000,
+          "saved_best_val_growth_alpha": 0.20806699991226196,
+          "saved_best_val_effective_holdings": 11.207037925720215,
+          "saved_final_val_growth_alpha": 0.18796318769454956,
+          "saved_final_val_effective_holdings": 10.889301300048828,
+          "strategy_label": "run 3 | risk=0.0 | conc=1.0",
+          "sample_count": 14,
+          "portfolio_growth_mean": 1.6409804859358201,
+          "benchmark_growth_mean": 1.1176759643041432,
+          "growth_alpha_mean": 0.5233045216316766,
+          "max_weight_mean": 0.2283243833050646,
+          "effective_holdings_mean": 7.929686896537589,
+          "ticker_count_mean": 57.0,
+          "cumulative_growth": 691.8056556813902,
+          "benchmark_cumulative_growth": 3.981414409902108,
+          "cumulative_alpha": 687.8242412714882
+        }
+      ],
+      "benchmark_terminal_nav": 3.981414409902108,
+      "outputs": {
+        "multirun_root": {
+          "run_summary": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_run_summary_all.csv",
+          "sample_weights": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_sample_weights_all.csv",
+          "growth_by_quarter": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_top5_growth_by_quarter_all.csv",
+          "top5_allocations": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_top5_allocations_all.csv",
+          "top_holdings_prices": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_top5_top_holdings_prices_all.csv",
+          "growth_plot": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/saves/run_artifacts/train_qai_portfolio/portfolio_eval_growth_all.png"
+        },
+        "run_dir": {
+          "run_summary": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_run_summary_all.csv",
+          "sample_weights": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_sample_weights_all.csv",
+          "growth_by_quarter": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_top5_growth_by_quarter_all.csv",
+          "top5_allocations": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_top5_allocations_all.csv",
+          "top_holdings_prices": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_top5_top_holdings_prices_all.csv",
+          "growth_plot": "/Users/tanny/Documents/Projects/Big-Data-AI-Project/eval_outputs/portfolio_eval_growth_all.png"
+        }
+      }
+    }
+  }
+}

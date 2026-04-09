@@ -1,0 +1,11 @@
+# @package _global_
+
+defaults:
+  - override /mode: eval
+  - override /data: example
+  - override /model: example
+  - override /metrics: example
+  - override /evaluator: qai_portfolio_multirun
+
+name: qai_portfolio_multirun_eval
+run_dir: outputs/qai_portfolio_multirun_evaluation
