@@ -508,8 +508,8 @@ def test_fmp_technical_fetch_skips_lookback_that_exceeds_configured_window() -> 
 def test_valid_technical_indicator_configs_filters_monthly_lookbacks() -> None:
     valid = _valid_technical_indicator_configs(
         [
-            {"name": "sma", "periodLength": 50, "timeframe": "1day"},
-            {"name": "ema", "periodLength": 100, "timeframe": "1day"},
+            {"name": "sma", "periodLength": 50, "timeframe": "1month"},
+            {"name": "ema", "periodLength": 100, "timeframe": "1month"},
         ],
         date_from="2020-01-01",
         date_to="2025-12-31",

@@ -9,6 +9,7 @@ import numpy as np
 @dataclass
 class QaiPortfolioLightGBMModel:
     input_dim: int | None = None
+    sequence_length: int | None = None
     objective: str = "regression"
     n_estimators: int = 100
     learning_rate: float = 0.05
