@@ -1,0 +1,25 @@
+[
+  {
+    "epoch": 1,
+    "train_steps": 1,
+    "train_loss": 10204.958984375,
+    "train_regression_loss": 10204.060546875,
+    "train_classification_loss": 0.8986274003982544,
+    "train_price_mae": 100.92896270751953,
+    "train_class_accuracy": 0.75,
+    "train_class_accuracy_h1": 1.0,
+    "train_class_accuracy_h2": 0.0,
+    "train_class_accuracy_h3": 1.0,
+    "train_class_accuracy_h4": 1.0,
+    "val_steps": 1,
+    "val_loss": 10442.341796875,
+    "val_regression_loss": 10440.7744140625,
+    "val_classification_loss": 1.5669504404067993,
+    "val_price_mae": 102.08624267578125,
+    "val_class_accuracy": 0.25,
+    "val_class_accuracy_h1": 0.0,
+    "val_class_accuracy_h2": 0.0,
+    "val_class_accuracy_h3": 0.0,
+    "val_class_accuracy_h4": 1.0
+  }
+]

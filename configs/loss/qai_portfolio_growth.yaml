@@ -1,0 +1,5 @@
+_target_: src.losses.qai_portfolio_growth.QaiPortfolioGrowthLoss
+use_log_growth: true
+risk_penalty: 0.0
+concentration_penalty: 0.0
+eps: 1.0e-8

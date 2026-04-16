@@ -1,0 +1,17 @@
+_target_: src.datamodules.qai_datamodule.QaiDataModule
+train_path: data/preprocessed/train.csv
+val_path: data/preprocessed/val.csv
+test_path: data/preprocessed/test.csv
+price_history_path: data/raw/us-shareprices-daily.csv
+sequence_length: 4
+feature_columns: null
+exclude_columns:
+  - split
+  - window_ready
+  - horizon_target_ready
+  - ticker_history_index
+horizons: [1]
+price_field: Adj. Close
+flat_return_threshold: 0.02
+batch_size: 32
+num_workers: 0
