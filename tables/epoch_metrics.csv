@@ -1,2 +1,2 @@
 epoch,train_class_accuracy,train_class_accuracy_h1,train_class_accuracy_h2,train_class_accuracy_h3,train_class_accuracy_h4,train_classification_loss,train_loss,train_price_mae,train_regression_loss,train_steps,val_class_accuracy,val_class_accuracy_h1,val_class_accuracy_h2,val_class_accuracy_h3,val_class_accuracy_h4,val_classification_loss,val_loss,val_price_mae,val_regression_loss,val_steps
-1,0.0,0.0,0.0,0.0,0.0,1.5416440963745117,10199.6953125,100.88226318359375,10198.1533203125,1,0.25,0.0,1.0,0.0,0.0,1.4167289733886719,10409.1923828125,101.92988586425781,10407.775390625,1
+1,0.25,0.0,0.0,0.0,1.0,1.3470087051391602,10301.0263671875,101.38294982910156,10299.6796875,1,0.5,0.0,1.0,0.0,1.0,1.1553962230682373,10489.8935546875,102.33474731445312,10488.73828125,1

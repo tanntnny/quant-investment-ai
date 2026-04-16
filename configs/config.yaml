@@ -15,5 +15,6 @@ defaults:
   - callbacks: default
   - logger: default
   - experiment: null
+  - portfolio_model: null
 
 seed: 123

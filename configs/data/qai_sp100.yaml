@@ -121,6 +121,183 @@ provider:
     sort: LATEST
     limit: 50
     divide_range_days: null
+  fmp:
+    env_file: ".env"
+    api_key_env: "FMP_API_KEY"
+    base_url: "https://financialmodelingprep.com/stable"
+    api_calls_per_minute: 300
+    timeout_seconds: 30.0
+    max_retries: 2
+    force_refresh: false
+    allow_partial_fmp: false
+    economic_indicators:
+      - name: GDP
+        column: gdp
+      - name: realGDP
+        column: real_gdp
+      - name: nominalPotentialGDP
+        column: nominal_potential_gdp
+      - name: realGDPPerCapita
+        column: real_gdp_per_capita
+      - name: federalFunds
+        column: federal_funds_rate
+      - name: CPI
+        column: cpi
+      - name: inflationRate
+        column: inflation_rate
+      - name: inflation
+        column: inflation
+      - name: retailSales
+        column: retail_sales
+      - name: consumerSentiment
+        column: consumer_sentiment
+      - name: durableGoods
+        column: durable_goods
+      - name: unemploymentRate
+        column: unemployment_rate
+      - name: totalNonfarmPayroll
+        column: total_nonfarm_payroll
+      - name: initialClaims
+        column: initial_claims
+      - name: industrialProductionTotalIndex
+        column: industrial_production_total_index
+      - name: newPrivatelyOwnedHousingUnitsStartedTotalUnits
+        column: housing_starts_total_units
+      - name: totalVehicleSales
+        column: total_vehicle_sales
+      - name: retailMoneyFunds
+        column: retail_money_funds
+      - name: smoothedUSRecessionProbabilities
+        column: smoothed_us_recession_probabilities
+      - name: 3MonthOr90DayRatesAndYieldsCertificatesOfDeposit
+        column: cd_3m_90d_rate
+      - name: commercialBankInterestRateOnCreditCardPlansAllAccounts
+        column: credit_card_interest_rate_all_accounts
+      - name: 30YearFixedRateMortgageAverage
+        column: mortgage_30y_fixed_average
+      - name: 15YearFixedRateMortgageAverage
+        column: mortgage_15y_fixed_average
+    technical_indicators:
+      - name: sma
+        periodLength: 5
+        timeframe: 1day
+      - name: sma
+        periodLength: 10
+        timeframe: 1day
+      - name: sma
+        periodLength: 20
+        timeframe: 1day
+      - name: sma
+        periodLength: 50
+        timeframe: 1day
+      - name: sma
+        periodLength: 100
+        timeframe: 1day
+      - name: sma
+        periodLength: 200
+        timeframe: 1day
+      - name: ema
+        periodLength: 5
+        timeframe: 1day
+      - name: ema
+        periodLength: 10
+        timeframe: 1day
+      - name: ema
+        periodLength: 20
+        timeframe: 1day
+      - name: ema
+        periodLength: 50
+        timeframe: 1day
+      - name: ema
+        periodLength: 100
+        timeframe: 1day
+      - name: ema
+        periodLength: 200
+        timeframe: 1day
+      - name: wma
+        periodLength: 5
+        timeframe: 1day
+      - name: wma
+        periodLength: 10
+        timeframe: 1day
+      - name: wma
+        periodLength: 20
+        timeframe: 1day
+      - name: wma
+        periodLength: 50
+        timeframe: 1day
+      - name: wma
+        periodLength: 100
+        timeframe: 1day
+      - name: wma
+        periodLength: 200
+        timeframe: 1day
+      - name: dema
+        periodLength: 10
+        timeframe: 1day
+      - name: dema
+        periodLength: 20
+        timeframe: 1day
+      - name: dema
+        periodLength: 50
+        timeframe: 1day
+      - name: dema
+        periodLength: 100
+        timeframe: 1day
+      - name: dema
+        periodLength: 200
+        timeframe: 1day
+      - name: tema
+        periodLength: 10
+        timeframe: 1day
+      - name: tema
+        periodLength: 20
+        timeframe: 1day
+      - name: tema
+        periodLength: 50
+        timeframe: 1day
+      - name: tema
+        periodLength: 100
+        timeframe: 1day
+      - name: tema
+        periodLength: 200
+        timeframe: 1day
+      - name: rsi
+        periodLength: 7
+        timeframe: 1day
+      - name: rsi
+        periodLength: 14
+        timeframe: 1day
+      - name: rsi
+        periodLength: 21
+        timeframe: 1day
+      - name: standarddeviation
+        periodLength: 10
+        timeframe: 1day
+      - name: standarddeviation
+        periodLength: 20
+        timeframe: 1day
+      - name: standarddeviation
+        periodLength: 50
+        timeframe: 1day
+      - name: williams
+        periodLength: 7
+        timeframe: 1day
+      - name: williams
+        periodLength: 14
+        timeframe: 1day
+      - name: williams
+        periodLength: 21
+        timeframe: 1day
+      - name: adx
+        periodLength: 7
+        timeframe: 1day
+      - name: adx
+        periodLength: 14
+        timeframe: 1day
+      - name: adx
+        periodLength: 21
+        timeframe: 1day
 dataset:
   ttm_window: 4
   zscore_window: 12
@@ -131,3 +308,5 @@ dataset:
 outputs:
   fundamental_filename: "fundamental.csv"
   story_filename: "story.csv"
+  economics_filename: "economics.csv"
+  technical_filename: "technical.csv"

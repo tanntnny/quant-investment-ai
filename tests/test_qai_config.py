@@ -41,3 +41,27 @@ def test_qai_train_experiment_resolves_train_flow() -> None:
     assert cfg.metrics._target_ == "src.metrics.qai_multitask.QaiMultiTaskMetrics"
     assert cfg.optimizer._target_ == "torch.optim.AdamW"
     assert cfg.trainer._target_ == "src.trainers.pytorch_trainer.PytorchTrainer"
+
+
+def test_qai_portfolio_model_pair_configs_resolve() -> None:
+    config_dir = str((Path(__file__).resolve().parents[1] / "configs").resolve())
+    with initialize_config_dir(version_base=None, config_dir=config_dir):
+        bilstm_cfg = compose(
+            config_name="config",
+            overrides=["experiment=qai_portfolio_train", "portfolio_model=bilstm"],
+        )
+        lightgbm_cfg = compose(
+            config_name="config",
+            overrides=["experiment=qai_portfolio_train", "portfolio_model=lightgbm"],
+        )
+
+    assert bilstm_cfg.model._target_ == "src.models.qai_portfolio_bilstm.QaiPortfolioBiLSTMModel"
+    assert bilstm_cfg.trainer._target_ == "src.trainers.pytorch_trainer.PytorchTrainer"
+    assert (
+        lightgbm_cfg.model._target_
+        == "src.models.qai_portfolio_lightgbm.QaiPortfolioLightGBMModel"
+    )
+    assert (
+        lightgbm_cfg.trainer._target_
+        == "src.trainers.lightgbm_portfolio_trainer.LightGBMPortfolioTrainer"
+    )

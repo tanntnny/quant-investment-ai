@@ -130,11 +130,40 @@ def test_qai_preprocess_preparer_builds_merged_table_and_metadata(tmp_path: Path
             },
         ]
     )
+    economics = pd.DataFrame(
+        [
+            {"date": "2024-03-31", "time_range": "q1y2024", "econ_gdp": 1.0},
+            {"date": "2024-06-30", "time_range": "q2y2024", "econ_gdp": 2.0},
+            {"date": "2024-09-30", "time_range": "q3y2024", "econ_gdp": 3.0},
+            {"date": "2024-12-31", "time_range": "q4y2024", "econ_gdp": 4.0},
+        ]
+    )
+    technical = pd.DataFrame(
+        [
+            {
+                "ticker": ticker,
+                "date": date,
+                "time_range": time_range,
+                "tech_rsi_14_1day": value,
+            }
+            for ticker in ("AAA", "BBB")
+            for date, time_range, value in [
+                ("2024-03-31", "q1y2024", 40.0),
+                ("2024-06-30", "q2y2024", 45.0),
+                ("2024-09-30", "q3y2024", 50.0),
+                ("2024-12-31", "q4y2024", 55.0),
+            ]
+        ]
+    )
 
     fundamental_path = tmp_path / "fundamental.csv"
     story_path = tmp_path / "story.csv"
+    economics_path = tmp_path / "economics.csv"
+    technical_path = tmp_path / "technical.csv"
     fundamental.to_csv(fundamental_path, index=False)
     story.to_csv(story_path, index=False)
+    economics.to_csv(economics_path, index=False)
+    technical.to_csv(technical_path, index=False)
 
     preparer = QaiPreprocessPreparer()
     paths_cfg = type(
@@ -150,6 +179,8 @@ def test_qai_preprocess_preparer_builds_merged_table_and_metadata(tmp_path: Path
             "inputs": {
                 "fundamental_path": str(fundamental_path),
                 "story_path": str(story_path),
+                "economics_path": str(economics_path),
+                "technical_path": str(technical_path),
             },
             "outputs": {
                 "preprocessed_filename": "qai_preprocessed.csv",
@@ -166,6 +197,7 @@ def test_qai_preprocess_preparer_builds_merged_table_and_metadata(tmp_path: Path
             "val_ratio": 0.25,
             "test_ratio": 0.25,
             "fill_story_missing_with_zero": True,
+            "fill_fmp_missing_with_zero": False,
             "min_sequence_points": None,
         }
     )
@@ -187,6 +219,10 @@ def test_qai_preprocess_preparer_builds_merged_table_and_metadata(tmp_path: Path
     assert metadata["standardization_strategy"] == "train_split_zscore"
     assert "topic_relevance_earnings" in metadata["topic_columns"]
     assert "topic_relevance_finance" in metadata["topic_columns"]
+    assert metadata["economics_columns"] == ["econ_gdp"]
+    assert metadata["technical_columns"] == ["tech_rsi_14_1day"]
+    assert "econ_gdp" in merged.columns
+    assert "tech_rsi_14_1day" in merged.columns
     aaa_q2 = merged.loc[(merged["ticker"] == "AAA") & (merged["time_range"] == "q2y2024")].iloc[0]
     assert aaa_q2["story_count"] == pytest.approx(-0.5773502691896258)
     assert aaa_q2["ticker_sentiment_score"] == pytest.approx(-0.5773502691896258)

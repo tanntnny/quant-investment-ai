@@ -44,20 +44,22 @@ def run(cfg: DictConfig) -> None:
     model = instantiate(model_cfg)
     loss_fn = instantiate(cfg.loss)
     metric_fn = instantiate(cfg.metrics)
-    try:
-        optimizer = instantiate(cfg.optimizer, params=model.parameters())
-    except TypeError:
-        optimizer = instantiate(cfg.optimizer)
+    trainer = instantiate(cfg.trainer)
+    optimizer = None
+    if getattr(trainer, "requires_optimizer", True):
+        try:
+            optimizer = instantiate(cfg.optimizer, params=model.parameters())
+        except TypeError:
+            optimizer = instantiate(cfg.optimizer)
     scheduler_cfg = cfg.get("scheduler")
     scheduler = None
-    if scheduler_cfg is not None:
+    if scheduler_cfg is not None and optimizer is not None:
         try:
             scheduler = instantiate(scheduler_cfg, optimizer=optimizer)
         except TypeError:
             scheduler = instantiate(scheduler_cfg)
     callbacks = instantiate(cfg.callbacks)
     logger = instantiate(cfg.logger)
-    trainer = instantiate(cfg.trainer)
     run_dir = Path.cwd()
     output_run_dir = get_hydra_output_dir()
     artifact_run_dirs = [run_dir]
@@ -197,7 +199,10 @@ def _build_training_hyperparams(
 
 def _build_model_structure_rows(model) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    for module_name, module in model.named_children():
+    named_children = getattr(model, "named_children", None)
+    if not callable(named_children):
+        return rows
+    for module_name, module in named_children():
         rows.append(
             {
                 "module": module_name,
@@ -225,9 +230,12 @@ def _build_training_setup_payload(*, cfg: DictConfig, model_cfg: dict) -> dict[s
 
 
 def _count_parameters(model, *, trainable_only: bool = False) -> int:
+    parameters = getattr(model, "parameters", None)
+    if not callable(parameters):
+        return 0
     return sum(
         parameter.numel()
-        for parameter in model.parameters()
+        for parameter in parameters()
         if not trainable_only or parameter.requires_grad
     )
 

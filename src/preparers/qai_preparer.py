@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -11,6 +12,7 @@ from src.data.dataset_builder import DatasetBuildConfig, build_fundamental_datas
 from src.data.providers import create_provider
 from src.utils.alphavantage import AlphaVantage, AlphaVantageError
 from src.utils.console import announce, render_kv_table
+from src.utils.fmp import FinancialModelingPrep, FmpError
 
 logger = logging.getLogger(__name__)
 
@@ -260,10 +262,211 @@ def _deduplicate_story_rows(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _api_date(value: str | None) -> str | None:
+    timestamp = _parse_api_timestamp(value)
+    if timestamp is None:
+        return None
+    return timestamp.strftime("%Y-%m-%d")
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", value.strip().lower()).strip("_")
+    return slug or "value"
+
+
+def _to_time_range(timestamp: pd.Timestamp) -> str:
+    return f"q{timestamp.quarter}y{timestamp.year}"
+
+
+def _as_indicator_configs(raw_indicators: Any) -> list[dict[str, Any]]:
+    if raw_indicators is None:
+        return []
+    indicators = []
+    for item in raw_indicators:
+        if isinstance(item, str):
+            indicators.append({"name": item, "column": _slugify(item)})
+        else:
+            indicators.append(dict(item))
+    return indicators
+
+
+def _empty_economics_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=["date", "time_range"])
+
+
+def _empty_technical_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=["ticker", "date", "time_range"])
+
+
+def _fetch_economics_frame(
+    *,
+    fmp_client: FinancialModelingPrep,
+    fmp_cfg,
+    time_from: str | None,
+    time_to: str | None,
+) -> pd.DataFrame:
+    indicators = _as_indicator_configs(fmp_cfg.get("economic_indicators", []))
+    if not indicators:
+        return _empty_economics_frame()
+
+    date_from = fmp_cfg.get("from") or _api_date(time_from)
+    date_to = fmp_cfg.get("to") or _api_date(time_to)
+    frames: list[pd.DataFrame] = []
+    for indicator_cfg in indicators:
+        name = str(indicator_cfg["name"])
+        column = f"econ_{_slugify(str(indicator_cfg.get('column') or name))}"
+        _announce(f"[FMP] Requesting economic indicator name={name}")
+        payload = fmp_client.get_economic_indicator(
+            name=name,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        frame = pd.DataFrame(payload)
+        if frame.empty:
+            continue
+        if "date" not in frame.columns:
+            raise FmpError(f"FMP economic indicator {name} response is missing 'date'")
+        value_column = str(indicator_cfg.get("value_column", "value"))
+        if value_column not in frame.columns:
+            numeric_candidates = [
+                candidate
+                for candidate in frame.columns
+                if candidate != "date" and pd.api.types.is_numeric_dtype(frame[candidate])
+            ]
+            value_column = numeric_candidates[0] if numeric_candidates else value_column
+        if value_column not in frame.columns:
+            raise FmpError(
+                f"FMP economic indicator {name} response is missing '{value_column}'"
+            )
+        normalized = frame.loc[:, ["date", value_column]].copy()
+        normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
+        normalized[column] = pd.to_numeric(normalized[value_column], errors="coerce")
+        normalized = normalized.dropna(subset=["date"]).loc[:, ["date", column]]
+        frames.append(normalized)
+
+    if not frames:
+        return _empty_economics_frame()
+
+    merged = frames[0]
+    for frame in frames[1:]:
+        merged = merged.merge(frame, how="outer", on="date")
+    merged = merged.sort_values("date").reset_index(drop=True)
+    merged["time_range"] = merged["date"].map(_to_time_range)
+    grouped = (
+        merged.groupby("time_range", as_index=False)
+        .agg(
+            date=("date", "max"),
+            **{
+                column: (column, "last")
+                for column in merged.columns
+                if column not in {"date", "time_range"}
+            },
+        )
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    grouped["date"] = grouped["date"].dt.strftime("%Y-%m-%d")
+    ordered = ["date", "time_range"] + [
+        column for column in grouped.columns if column not in {"date", "time_range"}
+    ]
+    return grouped.loc[:, ordered]
+
+
+def _fetch_technical_frame(
+    *,
+    fmp_client: FinancialModelingPrep,
+    fmp_cfg,
+    tickers: Sequence[str],
+    time_from: str | None,
+    time_to: str | None,
+) -> pd.DataFrame:
+    indicators = _as_indicator_configs(fmp_cfg.get("technical_indicators", []))
+    if not indicators:
+        return _empty_technical_frame()
+
+    date_from = fmp_cfg.get("from") or _api_date(time_from)
+    date_to = fmp_cfg.get("to") or _api_date(time_to)
+    frames: list[pd.DataFrame] = []
+    for ticker in tickers:
+        ticker_frames: list[pd.DataFrame] = []
+        for indicator_cfg in indicators:
+            name = str(indicator_cfg["name"]).lower()
+            period_length = int(indicator_cfg["periodLength"])
+            timeframe = str(indicator_cfg["timeframe"])
+            column = "tech_{name}_{period}_{timeframe}".format(
+                name=_slugify(str(indicator_cfg.get("column") or name)),
+                period=period_length,
+                timeframe=_slugify(timeframe),
+            )
+            _announce(
+                "[FMP] Requesting technical indicator "
+                f"ticker={ticker} name={name} period={period_length} timeframe={timeframe}"
+            )
+            payload = fmp_client.get_technical_indicator(
+                symbol=str(ticker),
+                indicator=name,
+                period_length=period_length,
+                timeframe=timeframe,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            frame = pd.DataFrame(payload)
+            if frame.empty:
+                continue
+            if "date" not in frame.columns:
+                raise FmpError(
+                    f"FMP technical indicator {name} response for {ticker} is missing 'date'"
+                )
+            value_column = str(indicator_cfg.get("value_column", name))
+            if value_column not in frame.columns:
+                raise FmpError(
+                    f"FMP technical indicator {name} response for {ticker} is missing "
+                    f"'{value_column}'"
+                )
+            normalized = frame.loc[:, ["date", value_column]].copy()
+            normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
+            normalized[column] = pd.to_numeric(normalized[value_column], errors="coerce")
+            normalized = normalized.dropna(subset=["date"]).loc[:, ["date", column]]
+            ticker_frames.append(normalized)
+        if not ticker_frames:
+            continue
+        ticker_frame = ticker_frames[0]
+        for frame in ticker_frames[1:]:
+            ticker_frame = ticker_frame.merge(frame, how="outer", on="date")
+        ticker_frame["ticker"] = str(ticker)
+        frames.append(ticker_frame)
+
+    if not frames:
+        return _empty_technical_frame()
+
+    merged = pd.concat(frames, ignore_index=True).sort_values(["ticker", "date"])
+    merged["time_range"] = merged["date"].map(_to_time_range)
+    numeric_columns = [
+        column
+        for column in merged.columns
+        if column not in {"ticker", "date", "time_range"}
+    ]
+    grouped = (
+        merged.groupby(["ticker", "time_range"], as_index=False)
+        .agg(
+            date=("date", "max"),
+            **{column: (column, "last") for column in numeric_columns},
+        )
+        .sort_values(["ticker", "date"])
+        .reset_index(drop=True)
+    )
+    grouped["date"] = grouped["date"].dt.strftime("%Y-%m-%d")
+    ordered = ["ticker", "date", "time_range"] + [
+        column for column in grouped.columns if column not in {"ticker", "date", "time_range"}
+    ]
+    return grouped.loc[:, ordered]
+
+
 class QaiPreparer:
-    def __init__(self, provider=None, story_client=None) -> None:
+    def __init__(self, provider=None, story_client=None, fmp_client=None) -> None:
         self.provider = provider
         self.story_client = story_client
+        self.fmp_client = fmp_client
         self.last_run_summary: dict[str, Any] | None = None
 
     def _create_story_client(self, data_cfg) -> AlphaVantage:
@@ -272,6 +475,17 @@ class QaiPreparer:
             env_path=alpha_cfg.env_file,
             api_key_env=alpha_cfg.api_key_env,
             api_calls_per_minute=alpha_cfg.get("api_call_per_minute"),
+        )
+
+    def _create_fmp_client(self, data_cfg) -> FinancialModelingPrep:
+        fmp_cfg = data_cfg.provider.fmp
+        return FinancialModelingPrep.from_env(
+            env_file=fmp_cfg.get("env_file", ".env"),
+            api_key_env=fmp_cfg.get("api_key_env", "FMP_API_KEY"),
+            api_calls_per_minute=fmp_cfg.get("api_calls_per_minute"),
+            base_url=fmp_cfg.get("base_url", "https://financialmodelingprep.com/stable"),
+            timeout_seconds=float(fmp_cfg.get("timeout_seconds", 30.0)),
+            max_retries=int(fmp_cfg.get("max_retries", 2)),
         )
 
     def prepare(self, data_cfg, paths_cfg) -> Path:
@@ -379,6 +593,63 @@ class QaiPreparer:
             f"raw_rows={len(story_frame_raw)} deduplicated_rows={len(story_frame)}"
         )
 
+        fmp_summary: dict[str, Any] = {}
+        if "fmp" in data_cfg.provider:
+            fmp_client = self.fmp_client or self._create_fmp_client(data_cfg)
+            economics_path = processed_dir / data_cfg.outputs.get(
+                "economics_filename", "economics.csv"
+            )
+            technical_path = processed_dir / data_cfg.outputs.get(
+                "technical_filename", "technical.csv"
+            )
+            try:
+                economics_frame = _fetch_economics_frame(
+                    fmp_client=fmp_client,
+                    fmp_cfg=data_cfg.provider.fmp,
+                    time_from=data_cfg.time_from,
+                    time_to=data_cfg.time_to,
+                )
+                technical_frame = _fetch_technical_frame(
+                    fmp_client=fmp_client,
+                    fmp_cfg=data_cfg.provider.fmp,
+                    tickers=tickers,
+                    time_from=data_cfg.time_from,
+                    time_to=data_cfg.time_to,
+                )
+            except FmpError:
+                if not bool(data_cfg.provider.fmp.get("allow_partial_fmp", False)):
+                    raise
+                _announce("[QAI] FMP fetch failed; saving empty FMP feature files")
+                economics_frame = _empty_economics_frame()
+                technical_frame = _empty_technical_frame()
+
+            economics_frame.to_csv(economics_path, index=False)
+            technical_frame.to_csv(technical_path, index=False)
+            fmp_client_stats_getter = getattr(fmp_client, "get_usage_stats", None)
+            fmp_client_stats = (
+                fmp_client_stats_getter() if callable(fmp_client_stats_getter) else {}
+            )
+            fmp_summary = {
+                **fmp_client_stats,
+                "economics_rows": int(len(economics_frame)),
+                "technical_rows": int(len(technical_frame)),
+                "economics_unique_dates": int(economics_frame["date"].nunique())
+                if not economics_frame.empty and "date" in economics_frame
+                else 0,
+                "technical_unique_tickers": int(technical_frame["ticker"].nunique())
+                if not technical_frame.empty and "ticker" in technical_frame
+                else 0,
+                "economics_output_path": str(economics_path),
+                "technical_output_path": str(technical_path),
+            }
+            _announce(
+                f"[QAI] Saved FMP economics to {economics_path} rows={len(economics_frame)}"
+            )
+            _announce(
+                f"[QAI] Saved FMP technical indicators to {technical_path} "
+                f"rows={len(technical_frame)}"
+            )
+
         story_client_stats_getter = getattr(story_client, "get_usage_stats", None)
         story_client_stats = (
             story_client_stats_getter() if callable(story_client_stats_getter) else {}
@@ -402,6 +673,7 @@ class QaiPreparer:
             "story_unique_dates": int(story_frame["date"].nunique()) if not story_frame.empty else 0,
             **asdict(story_fetch_summary),
             **story_client_stats,
+            **fmp_summary,
             "fundamental_output_path": str(fundamental_path),
             "story_output_path": str(story_path),
         }

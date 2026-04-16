@@ -1,6 +1,8 @@
 inputs:
   fundamental_path: "${paths.cleaned_data_dir}/fundamental.csv"
   story_path: "${paths.cleaned_data_dir}/story.csv"
+  economics_path: "${paths.cleaned_data_dir}/economics.csv"
+  technical_path: "${paths.cleaned_data_dir}/technical.csv"
 
 outputs:
   preprocessed_filename: "qai_preprocessed.csv"
@@ -18,4 +20,5 @@ train_ratio: 0.7
 val_ratio: 0.15
 test_ratio: 0.15
 fill_story_missing_with_zero: true
+fill_fmp_missing_with_zero: false
 min_sequence_points: null

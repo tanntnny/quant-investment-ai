@@ -41,10 +41,14 @@ class QaiPreprocessPreparer:
         cleaned_dir = Path(getattr(paths_cfg, "cleaned_data_dir", "data/cleaned"))
         fundamental_path = Path(data_cfg.inputs.get("fundamental_path", cleaned_dir / "fundamental.csv"))
         story_path = Path(data_cfg.inputs.get("story_path", cleaned_dir / "story.csv"))
+        economics_path = Path(data_cfg.inputs.get("economics_path", cleaned_dir / "economics.csv"))
+        technical_path = Path(data_cfg.inputs.get("technical_path", cleaned_dir / "technical.csv"))
 
         _announce(
             "[QAI Preprocess] Starting preprocessing "
-            f"fundamental={fundamental_path} story={story_path} output_dir={preprocessed_dir}"
+            f"fundamental={fundamental_path} story={story_path} "
+            f"economics={economics_path} technical={technical_path} "
+            f"output_dir={preprocessed_dir}"
         )
 
         fundamental = _load_fundamental_frame(
@@ -57,6 +61,15 @@ class QaiPreprocessPreparer:
             ticker_column=data_cfg.get("ticker_column", "ticker"),
             date_column=data_cfg.get("date_column", "date"),
         )
+        economics = _load_economics_frame(
+            economics_path,
+            date_column=data_cfg.get("date_column", "date"),
+        )
+        technical = _load_technical_frame(
+            technical_path,
+            ticker_column=data_cfg.get("ticker_column", "ticker"),
+            date_column=data_cfg.get("date_column", "date"),
+        )
         aggregated_story = _aggregate_story_frame(story)
         merged = fundamental.merge(
             aggregated_story,
@@ -64,6 +77,24 @@ class QaiPreprocessPreparer:
             on=["ticker", "time_range"],
             suffixes=("", "_story"),
         )
+        if not economics.empty:
+            merged = merged.merge(
+                economics,
+                how="left",
+                on="time_range",
+                suffixes=("", "_economics"),
+            )
+            if "quarter_end_date_economics" in merged.columns:
+                merged = merged.drop(columns=["quarter_end_date_economics"])
+        if not technical.empty:
+            merged = merged.merge(
+                technical,
+                how="left",
+                on=["ticker", "time_range"],
+                suffixes=("", "_technical"),
+            )
+            if "quarter_end_date_technical" in merged.columns:
+                merged = merged.drop(columns=["quarter_end_date_technical"])
         merged = merged.sort_values(["ticker", "quarter_end_date"]).reset_index(drop=True)
 
         story_numeric_columns = [
@@ -73,6 +104,15 @@ class QaiPreprocessPreparer:
         ]
         if bool(data_cfg.get("fill_story_missing_with_zero", True)):
             for column in story_numeric_columns:
+                if column in merged.columns:
+                    merged[column] = merged[column].fillna(0.0)
+        fmp_numeric_columns = [
+            column
+            for column in [*economics.columns, *technical.columns]
+            if column not in {"ticker", "time_range", "quarter_end_date"}
+        ]
+        if bool(data_cfg.get("fill_fmp_missing_with_zero", False)):
+            for column in fmp_numeric_columns:
                 if column in merged.columns:
                     merged[column] = merged[column].fillna(0.0)
 
@@ -124,6 +164,8 @@ class QaiPreprocessPreparer:
         metadata = {
             "fundamental_input_path": str(fundamental_path),
             "story_input_path": str(story_path),
+            "economics_input_path": str(economics_path),
+            "technical_input_path": str(technical_path),
             "preprocessed_output_path": str(output_path),
             "rows": int(len(merged)),
             "tickers": int(merged["ticker"].nunique()) if not merged.empty else 0,
@@ -140,6 +182,12 @@ class QaiPreprocessPreparer:
             },
             "feature_columns": feature_columns,
             "topic_columns": topic_columns,
+            "economics_columns": [
+                column for column in feature_columns if column.startswith("econ_")
+            ],
+            "technical_columns": [
+                column for column in feature_columns if column.startswith("tech_")
+            ],
             "splits": merged["split"].value_counts(dropna=False).to_dict(),
             "imputation_strategy": "train_split_median",
             "standardization_strategy": "train_split_zscore",
@@ -190,6 +238,78 @@ def _load_story_frame(path: Path, *, ticker_column: str, date_column: str) -> pd
     frame = frame.dropna(subset=["ticker", "quarter_end_date"]).copy()
     frame["time_range"] = frame["quarter_end_date"].map(_to_time_range)
     return frame
+
+
+def _load_economics_frame(path: Path, *, date_column: str) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame(columns=["time_range", "quarter_end_date"])
+    frame = pd.read_csv(path)
+    if frame.empty:
+        return pd.DataFrame(columns=["time_range", "quarter_end_date"])
+    frame = frame.rename(columns={date_column: "date"})
+    if "date" not in frame.columns:
+        return pd.DataFrame(columns=["time_range", "quarter_end_date"])
+    frame["quarter_end_date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame = frame.dropna(subset=["quarter_end_date"]).copy()
+    if "time_range" not in frame.columns:
+        frame["time_range"] = frame["quarter_end_date"].map(_to_time_range)
+
+    numeric_columns = [
+        column
+        for column in frame.columns
+        if column not in {"date", "time_range", "quarter_end_date"}
+        and pd.api.types.is_numeric_dtype(frame[column])
+    ]
+    if not numeric_columns:
+        return pd.DataFrame(columns=["time_range", "quarter_end_date"])
+    return (
+        frame.groupby("time_range", as_index=False)
+        .agg(
+            quarter_end_date=("quarter_end_date", "max"),
+            **{column: (column, "last") for column in numeric_columns},
+        )
+        .sort_values("quarter_end_date")
+        .reset_index(drop=True)
+    )
+
+
+def _load_technical_frame(
+    path: Path,
+    *,
+    ticker_column: str,
+    date_column: str,
+) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame(columns=["ticker", "time_range", "quarter_end_date"])
+    frame = pd.read_csv(path)
+    if frame.empty:
+        return pd.DataFrame(columns=["ticker", "time_range", "quarter_end_date"])
+    frame = frame.rename(columns={ticker_column: "ticker", date_column: "date"})
+    if "ticker" not in frame.columns or "date" not in frame.columns:
+        return pd.DataFrame(columns=["ticker", "time_range", "quarter_end_date"])
+    frame["ticker"] = frame["ticker"].astype(str)
+    frame["quarter_end_date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame = frame.dropna(subset=["ticker", "quarter_end_date"]).copy()
+    if "time_range" not in frame.columns:
+        frame["time_range"] = frame["quarter_end_date"].map(_to_time_range)
+
+    numeric_columns = [
+        column
+        for column in frame.columns
+        if column not in {"ticker", "date", "time_range", "quarter_end_date"}
+        and pd.api.types.is_numeric_dtype(frame[column])
+    ]
+    if not numeric_columns:
+        return pd.DataFrame(columns=["ticker", "time_range", "quarter_end_date"])
+    return (
+        frame.groupby(["ticker", "time_range"], as_index=False)
+        .agg(
+            quarter_end_date=("quarter_end_date", "max"),
+            **{column: (column, "last") for column in numeric_columns},
+        )
+        .sort_values(["ticker", "quarter_end_date"])
+        .reset_index(drop=True)
+    )
 
 
 def _aggregate_story_frame(frame: pd.DataFrame) -> pd.DataFrame:

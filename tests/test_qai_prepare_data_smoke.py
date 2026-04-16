@@ -176,6 +176,36 @@ class FakeStoryClient:
         }
 
 
+class FakeFmpClient:
+    def __init__(self) -> None:
+        self.economic_calls = []
+        self.technical_calls = []
+
+    def get_economic_indicator(self, **kwargs):
+        self.economic_calls.append(kwargs)
+        return [
+            {"date": "2024-03-31", "value": 1.0},
+            {"date": "2024-06-30", "value": 2.0},
+        ]
+
+    def get_technical_indicator(self, **kwargs):
+        self.technical_calls.append(kwargs)
+        indicator = kwargs["indicator"]
+        return [
+            {
+                "date": "2024-03-28 00:00:00",
+                indicator: 10.0,
+            },
+            {
+                "date": "2024-06-28 00:00:00",
+                indicator: 20.0,
+            },
+        ]
+
+    def get_usage_stats(self):
+        return {"fmp_api_calls_executed": len(self.economic_calls) + len(self.technical_calls)}
+
+
 def test_qai_preparer_writes_fundamental_and_story_outputs(tmp_path: Path) -> None:
     story_client = FakeStoryClient()
     preparer = QaiPreparer(provider=FakeProvider(), story_client=story_client)
@@ -242,6 +272,83 @@ def test_qai_preparer_writes_fundamental_and_story_outputs(tmp_path: Path) -> No
     assert preparer.last_run_summary["api_calls_executed"] == 1
     assert preparer.last_run_summary["configured_api_calls_per_minute"] == 75
     assert preparer.last_run_summary["story_rows_deduplicated"] == 3
+
+
+def test_qai_preparer_writes_fmp_economics_and_technical_outputs(tmp_path: Path) -> None:
+    story_client = FakeStoryClient()
+    fmp_client = FakeFmpClient()
+    preparer = QaiPreparer(
+        provider=FakeProvider(),
+        story_client=story_client,
+        fmp_client=fmp_client,
+    )
+    paths_cfg = OmegaConf.create(
+        {
+            "raw_data_dir": str(tmp_path / "raw"),
+            "cleaned_data_dir": str(tmp_path / "cleaned"),
+            "processed_data_dir": str(tmp_path / "processed"),
+        }
+    )
+    data_cfg = OmegaConf.create(
+        {
+            "tickers": ["AAA", "BBB"],
+            "time_from": "20240101T0000",
+            "time_to": "20241231T2359",
+            "provider": {
+                "simfin": {"type": "simfin", "force_refresh": False},
+                "alphavantage": {
+                    "env_file": str(tmp_path / ".env"),
+                    "api_key_env": "ALPHA_VANTAGE_API_KEY",
+                    "topics": None,
+                    "sort": "LATEST",
+                    "limit": 50,
+                    "divide_range_days": None,
+                    "api_call_per_minute": 75,
+                },
+                "fmp": {
+                    "economic_indicators": [{"name": "GDP", "column": "gdp"}],
+                    "technical_indicators": [
+                        {
+                            "name": "rsi",
+                            "periodLength": 14,
+                            "timeframe": "1day",
+                        }
+                    ],
+                    "allow_partial_fmp": False,
+                },
+            },
+            "dataset": {
+                "ttm_window": 4,
+                "zscore_window": 12,
+                "zscore_min_periods": 1,
+                "winsorize_lower_quantile": 0.01,
+                "winsorize_upper_quantile": 0.99,
+                "market_cap_min": 1000000.0,
+            },
+            "outputs": {
+                "fundamental_filename": "fundamental.csv",
+                "story_filename": "story.csv",
+                "economics_filename": "economics.csv",
+                "technical_filename": "technical.csv",
+            },
+        }
+    )
+
+    output_dir = preparer.prepare(data_cfg=data_cfg, paths_cfg=paths_cfg)
+
+    economics = pd.read_csv(output_dir / "economics.csv")
+    technical = pd.read_csv(output_dir / "technical.csv")
+
+    assert list(economics.columns[:2]) == ["date", "time_range"]
+    assert "econ_gdp" in economics.columns
+    assert set(economics["time_range"]) == {"q1y2024", "q2y2024"}
+    assert list(technical.columns[:3]) == ["ticker", "date", "time_range"]
+    assert "tech_rsi_14_1day" in technical.columns
+    assert set(technical["ticker"]) == {"AAA", "BBB"}
+    assert len(fmp_client.economic_calls) == 1
+    assert len(fmp_client.technical_calls) == 2
+    assert preparer.last_run_summary["economics_rows"] == 2
+    assert preparer.last_run_summary["technical_rows"] == 4
 
 
 def test_story_range_helpers_split_windows_and_budget() -> None:
