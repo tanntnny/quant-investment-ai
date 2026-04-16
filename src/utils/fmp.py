@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -27,6 +28,7 @@ class FinancialModelingPrep:
     max_retries: int = 2
     _request_timestamps: list[float] = field(default_factory=list, init=False)
     _api_calls_executed: int = field(default=0, init=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
     def from_env(
@@ -39,11 +41,12 @@ class FinancialModelingPrep:
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
     ) -> "FinancialModelingPrep":
-        env_values = _load_dotenv(env_file)
+        env_path = Path(env_file)
+        env_values = _load_dotenv(env_path)
         api_key = os.environ.get(api_key_env) or env_values.get(api_key_env)
         return cls(
             api_key=api_key,
-            env_file=env_file,
+            env_file=env_path,
             api_key_env=api_key_env,
             base_url=base_url.rstrip("/"),
             api_calls_per_minute=api_calls_per_minute,
@@ -105,7 +108,8 @@ class FinancialModelingPrep:
             self._throttle()
             try:
                 with urllib.request.urlopen(url, timeout=self.timeout_seconds) as response:
-                    self._api_calls_executed += 1
+                    with self._lock:
+                        self._api_calls_executed += 1
                     payload = json.loads(response.read().decode("utf-8"))
             except Exception as exc:  # pragma: no cover - network error shape varies by platform.
                 last_error = exc
@@ -127,13 +131,14 @@ class FinancialModelingPrep:
     def _throttle(self) -> None:
         if not self.api_calls_per_minute or self.api_calls_per_minute <= 0:
             return
-        now = time.monotonic()
-        window_start = now - 60.0
-        self._request_timestamps = [
-            timestamp for timestamp in self._request_timestamps if timestamp >= window_start
-        ]
-        if len(self._request_timestamps) >= self.api_calls_per_minute:
-            sleep_seconds = 60.0 - (now - self._request_timestamps[0])
-            if sleep_seconds > 0:
-                time.sleep(sleep_seconds)
-        self._request_timestamps.append(time.monotonic())
+        with self._lock:
+            now = time.monotonic()
+            window_start = now - 60.0
+            self._request_timestamps = [
+                timestamp for timestamp in self._request_timestamps if timestamp >= window_start
+            ]
+            if len(self._request_timestamps) >= self.api_calls_per_minute:
+                sleep_seconds = 60.0 - (now - self._request_timestamps[0])
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+            self._request_timestamps.append(time.monotonic())

@@ -10,7 +10,11 @@ from src.preparers.qai_preparer import (
     QaiPreparer,
     _allocate_window_limits,
     _build_story_request_windows,
+    _fetch_technical_frame,
+    _valid_technical_indicator_configs,
 )
+from src.utils.alphavantage import AlphaVantageError
+from src.utils.fmp import FmpError
 
 
 class FakeProvider:
@@ -174,6 +178,17 @@ class FakeStoryClient:
                 },
             ]
         }
+
+
+class RateLimitedStoryClient:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def get_news_sentiment(self, **kwargs):
+        self.calls.append(kwargs)
+        raise AlphaVantageError(
+            "standard API rate limit is 25 requests per day. request_params={'apikey': '***'}"
+        )
 
 
 class FakeFmpClient:
@@ -349,6 +364,228 @@ def test_qai_preparer_writes_fmp_economics_and_technical_outputs(tmp_path: Path)
     assert len(fmp_client.technical_calls) == 2
     assert preparer.last_run_summary["economics_rows"] == 2
     assert preparer.last_run_summary["technical_rows"] == 4
+
+
+def test_qai_preparer_can_continue_when_alphavantage_rate_limited(tmp_path: Path) -> None:
+    story_client = RateLimitedStoryClient()
+    preparer = QaiPreparer(provider=FakeProvider(), story_client=story_client)
+    paths_cfg = OmegaConf.create(
+        {
+            "raw_data_dir": str(tmp_path / "raw"),
+            "cleaned_data_dir": str(tmp_path / "cleaned"),
+            "processed_data_dir": str(tmp_path / "processed"),
+        }
+    )
+    data_cfg = OmegaConf.create(
+        {
+            "tickers": ["AAA", "BBB"],
+            "time_from": "20240101T0000",
+            "time_to": "20241231T2359",
+            "provider": {
+                "simfin": {"type": "simfin", "force_refresh": False},
+                "alphavantage": {
+                    "env_file": str(tmp_path / ".env"),
+                    "api_key_env": "ALPHA_VANTAGE_API_KEY",
+                    "topics": None,
+                    "sort": "LATEST",
+                    "limit": 50,
+                    "divide_range_days": None,
+                    "api_call_per_minute": 75,
+                    "allow_partial_on_error": True,
+                },
+            },
+            "dataset": {
+                "ttm_window": 4,
+                "zscore_window": 12,
+                "zscore_min_periods": 1,
+                "winsorize_lower_quantile": 0.01,
+                "winsorize_upper_quantile": 0.99,
+                "market_cap_min": 1000000.0,
+            },
+            "outputs": {
+                "fundamental_filename": "fundamental.csv",
+                "story_filename": "story.csv",
+            },
+        }
+    )
+
+    output_dir = preparer.prepare(data_cfg=data_cfg, paths_cfg=paths_cfg)
+
+    story = pd.read_csv(output_dir / "story.csv")
+    assert list(story.columns) == [
+        "ticker",
+        "date",
+        "time_published",
+        "title",
+        "summary",
+        "source",
+        "source_domain",
+        "category_within_source",
+        "url",
+        "overall_sentiment_score",
+        "overall_sentiment_label",
+        "ticker_relevance_score",
+        "ticker_sentiment_score",
+        "ticker_sentiment_label",
+        "authors_json",
+        "topics_json",
+        "banner_image",
+    ]
+    assert story.empty
+    assert len(story_client.calls) == 1
+    assert preparer.last_run_summary["story_partial_save"] is True
+    assert preparer.last_run_summary["story_rows_deduplicated"] == 0
+
+
+def test_fmp_technical_fetch_accepts_alternate_indicator_value_column() -> None:
+    class AlternateColumnFmpClient:
+        def get_technical_indicator(self, **_kwargs):
+            return [
+                {
+                    "date": "2024-03-28 00:00:00",
+                    "open": 1.0,
+                    "high": 2.0,
+                    "low": 0.5,
+                    "close": 1.5,
+                    "volume": 100,
+                    "standardDeviation": 0.25,
+                }
+            ]
+
+    frame = _fetch_technical_frame(
+        fmp_client=AlternateColumnFmpClient(),
+        fmp_cfg=OmegaConf.create(
+            {
+                "technical_indicators": [
+                    {
+                        "name": "standarddeviation",
+                        "periodLength": 20,
+                        "timeframe": "1day",
+                    }
+                ]
+            }
+        ),
+        tickers=["AAA"],
+        time_from="20240101T0000",
+        time_to="20241231T2359",
+    )
+
+    assert "tech_standarddeviation_20_1day" in frame.columns
+    assert frame.loc[0, "tech_standarddeviation_20_1day"] == 0.25
+
+
+def test_fmp_technical_fetch_skips_lookback_that_exceeds_configured_window() -> None:
+    class RecordingFmpClient:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_technical_indicator(self, **kwargs):
+            self.calls.append(kwargs)
+            return [{"date": "2024-01-31 00:00:00", kwargs["indicator"]: 1.0}]
+
+    fmp_client = RecordingFmpClient()
+
+    frame = _fetch_technical_frame(
+        fmp_client=fmp_client,
+        fmp_cfg=OmegaConf.create(
+            {
+                "technical_indicators": [
+                    {"name": "sma", "periodLength": 2, "timeframe": "1day"},
+                    {"name": "ema", "periodLength": 200, "timeframe": "1day"},
+                ]
+            }
+        ),
+        tickers=["AAA"],
+        time_from="20240101T0000",
+        time_to="20240630T2359",
+    )
+
+    assert [call["indicator"] for call in fmp_client.calls] == ["sma"]
+    assert "tech_sma_2_1day" in frame.columns
+    assert "tech_ema_200_1day" not in frame.columns
+
+
+def test_valid_technical_indicator_configs_filters_monthly_lookbacks() -> None:
+    valid = _valid_technical_indicator_configs(
+        [
+            {"name": "sma", "periodLength": 50, "timeframe": "1day"},
+            {"name": "ema", "periodLength": 100, "timeframe": "1day"},
+        ],
+        date_from="2020-01-01",
+        date_to="2025-12-31",
+    )
+
+    assert [item["name"] for item in valid] == ["sma"]
+
+
+def test_fmp_technical_fetch_skips_access_errors_when_partial_enabled() -> None:
+    class PaymentRequiredFmpClient:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_technical_indicator(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs["indicator"] == "sma":
+                raise FmpError(
+                    "FMP request failed for /technical-indicators/sma: "
+                    "HTTP Error 402: Payment Required"
+                )
+            return [{"date": "2024-01-31 00:00:00", kwargs["indicator"]: 1.0}]
+
+    fmp_client = PaymentRequiredFmpClient()
+
+    frame = _fetch_technical_frame(
+        fmp_client=fmp_client,
+        fmp_cfg=OmegaConf.create(
+            {
+                "allow_partial_fmp": True,
+                "technical_indicators": [
+                    {"name": "sma", "periodLength": 2, "timeframe": "1day"},
+                    {"name": "ema", "periodLength": 2, "timeframe": "1day"},
+                ],
+            }
+        ),
+        tickers=["AAA"],
+        time_from="20240101T0000",
+        time_to="20240630T2359",
+    )
+
+    assert [call["indicator"] for call in fmp_client.calls] == ["sma", "ema"]
+    assert "tech_sma_2_1day" not in frame.columns
+    assert "tech_ema_2_1day" in frame.columns
+
+
+def test_fmp_technical_fetch_supports_parallel_workers() -> None:
+    class RecordingFmpClient:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_technical_indicator(self, **kwargs):
+            self.calls.append(kwargs)
+            return [{"date": "2024-01-31 00:00:00", kwargs["indicator"]: 1.0}]
+
+    fmp_client = RecordingFmpClient()
+
+    frame = _fetch_technical_frame(
+        fmp_client=fmp_client,
+        fmp_cfg=OmegaConf.create(
+            {
+                "max_workers": 3,
+                "technical_indicators": [
+                    {"name": "sma", "periodLength": 2, "timeframe": "1day"},
+                    {"name": "ema", "periodLength": 2, "timeframe": "1day"},
+                ],
+            }
+        ),
+        tickers=["AAA", "BBB", "CCC"],
+        time_from="20240101T0000",
+        time_to="20240630T2359",
+    )
+
+    assert len(fmp_client.calls) == 6
+    assert set(frame["ticker"]) == {"AAA", "BBB", "CCC"}
+    assert "tech_sma_2_1day" in frame.columns
+    assert "tech_ema_2_1day" in frame.columns
 
 
 def test_story_range_helpers_split_windows_and_budget() -> None:

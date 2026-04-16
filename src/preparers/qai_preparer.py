@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -262,6 +263,10 @@ def _deduplicate_story_rows(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _empty_story_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=STORY_COLUMNS)
+
+
 def _api_date(value: str | None) -> str | None:
     timestamp = _parse_api_timestamp(value)
     if timestamp is None:
@@ -296,6 +301,128 @@ def _empty_economics_frame() -> pd.DataFrame:
 
 def _empty_technical_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=["ticker", "date", "time_range"])
+
+
+def _resolve_fmp_technical_value_column(
+    frame: pd.DataFrame,
+    *,
+    requested_column: str,
+    indicator_name: str,
+    ticker: str,
+) -> str:
+    if requested_column in frame.columns:
+        return requested_column
+
+    ignored_columns = {"date", "open", "high", "low", "close", "volume"}
+    numeric_candidates = [
+        column
+        for column in frame.columns
+        if column not in ignored_columns
+        and pd.api.types.is_numeric_dtype(pd.to_numeric(frame[column], errors="coerce"))
+    ]
+    if len(numeric_candidates) == 1:
+        return numeric_candidates[0]
+    if indicator_name == "standarddeviation":
+        for candidate in ("standardDeviation", "standard_deviation", "stdDev", "stddev"):
+            if candidate in frame.columns:
+                return candidate
+
+    raise FmpError(
+        f"FMP technical indicator {indicator_name} response for {ticker} is missing "
+        f"'{requested_column}' and no unique fallback numeric indicator column was found. "
+        f"columns={list(frame.columns)}"
+    )
+
+
+def _available_timeframe_periods(
+    *,
+    date_from: str | None,
+    date_to: str | None,
+    timeframe: str,
+) -> int | None:
+    if not date_from or not date_to:
+        return None
+    start = pd.to_datetime(date_from, errors="coerce")
+    end = pd.to_datetime(date_to, errors="coerce")
+    if pd.isna(start) or pd.isna(end) or end < start:
+        return None
+
+    match = re.fullmatch(r"(\d+)(min|hour|day|month)", timeframe.strip().lower())
+    if not match:
+        return None
+
+    step = int(match.group(1))
+    unit = match.group(2)
+    if step <= 0:
+        return None
+    if unit == "month":
+        months = (end.year - start.year) * 12 + end.month - start.month + 1
+        return max(months // step, 0)
+    if unit == "day":
+        return int(((end.normalize() - start.normalize()).days // step) + 1)
+    if unit == "hour":
+        return int(((end - start).total_seconds() // (step * 3600)) + 1)
+    if unit == "min":
+        return int(((end - start).total_seconds() // (step * 60)) + 1)
+    return None
+
+
+def _technical_indicator_fits_date_window(
+    *,
+    period_length: int,
+    timeframe: str,
+    date_from: str | None,
+    date_to: str | None,
+) -> bool:
+    available_periods = _available_timeframe_periods(
+        date_from=date_from,
+        date_to=date_to,
+        timeframe=timeframe,
+    )
+    return available_periods is None or period_length <= available_periods
+
+
+def _valid_technical_indicator_configs(
+    indicators: Sequence[dict[str, Any]],
+    *,
+    date_from: str | None,
+    date_to: str | None,
+) -> list[dict[str, Any]]:
+    valid_indicators: list[dict[str, Any]] = []
+    for indicator_cfg in indicators:
+        period_length = int(indicator_cfg["periodLength"])
+        timeframe = str(indicator_cfg["timeframe"])
+        if _technical_indicator_fits_date_window(
+            period_length=period_length,
+            timeframe=timeframe,
+            date_from=date_from,
+            date_to=date_to,
+        ):
+            valid_indicators.append(indicator_cfg)
+            continue
+        _announce(
+            "[FMP] Skipping technical indicator because lookback exceeds configured "
+            f"date window: name={indicator_cfg.get('name')} period={period_length} "
+            f"timeframe={timeframe} from={date_from} to={date_to}"
+        )
+    return valid_indicators
+
+
+def _is_fmp_access_error(error: FmpError) -> bool:
+    message = str(error).lower()
+    return any(
+        marker in message
+        for marker in (
+            "402",
+            "payment required",
+            "subscription",
+            "plan",
+            "limit",
+            "not available",
+            "unauthorized",
+            "forbidden",
+        )
+    )
 
 
 def _fetch_economics_frame(
@@ -372,6 +499,94 @@ def _fetch_economics_frame(
     return grouped.loc[:, ordered]
 
 
+def _fetch_one_technical_indicator(
+    *,
+    fmp_client: FinancialModelingPrep,
+    fmp_cfg,
+    ticker: str,
+    indicator_cfg: dict[str, Any],
+    date_from: str | None,
+    date_to: str | None,
+) -> pd.DataFrame | None:
+    name = str(indicator_cfg["name"]).lower()
+    period_length = int(indicator_cfg["periodLength"])
+    timeframe = str(indicator_cfg["timeframe"])
+    column = "tech_{name}_{period}_{timeframe}".format(
+        name=_slugify(str(indicator_cfg.get("column") or name)),
+        period=period_length,
+        timeframe=_slugify(timeframe),
+    )
+    _announce(
+        "[FMP] Requesting technical indicator "
+        f"ticker={ticker} name={name} period={period_length} timeframe={timeframe}"
+    )
+    try:
+        payload = fmp_client.get_technical_indicator(
+            symbol=str(ticker),
+            indicator=name,
+            period_length=period_length,
+            timeframe=timeframe,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except FmpError as exc:
+        if not bool(fmp_cfg.get("allow_partial_fmp", False)) or not _is_fmp_access_error(exc):
+            raise
+        _announce(
+            "[FMP] Skipping technical indicator after provider access error "
+            f"ticker={ticker} name={name} period={period_length} "
+            f"timeframe={timeframe}: {exc}"
+        )
+        return None
+
+    frame = pd.DataFrame(payload)
+    if frame.empty:
+        return None
+    if "date" not in frame.columns:
+        raise FmpError(f"FMP technical indicator {name} response for {ticker} is missing 'date'")
+    value_column = _resolve_fmp_technical_value_column(
+        frame,
+        requested_column=str(indicator_cfg.get("value_column", name)),
+        indicator_name=name,
+        ticker=str(ticker),
+    )
+    normalized = frame.loc[:, ["date", value_column]].copy()
+    normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
+    normalized[column] = pd.to_numeric(normalized[value_column], errors="coerce")
+    return normalized.dropna(subset=["date"]).loc[:, ["date", column]]
+
+
+def _fetch_ticker_technical_frame(
+    *,
+    fmp_client: FinancialModelingPrep,
+    fmp_cfg,
+    ticker: str,
+    indicators: Sequence[dict[str, Any]],
+    date_from: str | None,
+    date_to: str | None,
+) -> pd.DataFrame | None:
+    ticker_frames: list[pd.DataFrame] = []
+    for indicator_cfg in indicators:
+        frame = _fetch_one_technical_indicator(
+            fmp_client=fmp_client,
+            fmp_cfg=fmp_cfg,
+            ticker=ticker,
+            indicator_cfg=indicator_cfg,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        if frame is not None:
+            ticker_frames.append(frame)
+
+    if not ticker_frames:
+        return None
+    ticker_frame = ticker_frames[0]
+    for frame in ticker_frames[1:]:
+        ticker_frame = ticker_frame.merge(frame, how="outer", on="date")
+    ticker_frame["ticker"] = str(ticker)
+    return ticker_frame
+
+
 def _fetch_technical_frame(
     *,
     fmp_client: FinancialModelingPrep,
@@ -386,55 +601,56 @@ def _fetch_technical_frame(
 
     date_from = fmp_cfg.get("from") or _api_date(time_from)
     date_to = fmp_cfg.get("to") or _api_date(time_to)
+    valid_indicators = _valid_technical_indicator_configs(
+        indicators,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    if not valid_indicators:
+        return _empty_technical_frame()
+
+    _announce(
+        "[FMP] Technical indicator request plan "
+        f"tickers={len(tickers)} indicators={len(valid_indicators)} "
+        f"estimated_calls={len(tickers) * len(valid_indicators)} "
+        f"from={date_from} to={date_to}"
+    )
+
     frames: list[pd.DataFrame] = []
-    for ticker in tickers:
-        ticker_frames: list[pd.DataFrame] = []
-        for indicator_cfg in indicators:
-            name = str(indicator_cfg["name"]).lower()
-            period_length = int(indicator_cfg["periodLength"])
-            timeframe = str(indicator_cfg["timeframe"])
-            column = "tech_{name}_{period}_{timeframe}".format(
-                name=_slugify(str(indicator_cfg.get("column") or name)),
-                period=period_length,
-                timeframe=_slugify(timeframe),
-            )
-            _announce(
-                "[FMP] Requesting technical indicator "
-                f"ticker={ticker} name={name} period={period_length} timeframe={timeframe}"
-            )
-            payload = fmp_client.get_technical_indicator(
-                symbol=str(ticker),
-                indicator=name,
-                period_length=period_length,
-                timeframe=timeframe,
+    max_workers = int(fmp_cfg.get("max_workers", 1) or 1)
+    max_workers = max(1, min(max_workers, len(tickers)))
+    _announce(f"[FMP] Technical indicator fetch workers={max_workers}")
+
+    if max_workers == 1:
+        for ticker in tickers:
+            ticker_frame = _fetch_ticker_technical_frame(
+                fmp_client=fmp_client,
+                fmp_cfg=fmp_cfg,
+                ticker=str(ticker),
+                indicators=valid_indicators,
                 date_from=date_from,
                 date_to=date_to,
             )
-            frame = pd.DataFrame(payload)
-            if frame.empty:
-                continue
-            if "date" not in frame.columns:
-                raise FmpError(
-                    f"FMP technical indicator {name} response for {ticker} is missing 'date'"
-                )
-            value_column = str(indicator_cfg.get("value_column", name))
-            if value_column not in frame.columns:
-                raise FmpError(
-                    f"FMP technical indicator {name} response for {ticker} is missing "
-                    f"'{value_column}'"
-                )
-            normalized = frame.loc[:, ["date", value_column]].copy()
-            normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
-            normalized[column] = pd.to_numeric(normalized[value_column], errors="coerce")
-            normalized = normalized.dropna(subset=["date"]).loc[:, ["date", column]]
-            ticker_frames.append(normalized)
-        if not ticker_frames:
-            continue
-        ticker_frame = ticker_frames[0]
-        for frame in ticker_frames[1:]:
-            ticker_frame = ticker_frame.merge(frame, how="outer", on="date")
-        ticker_frame["ticker"] = str(ticker)
-        frames.append(ticker_frame)
+            if ticker_frame is not None:
+                frames.append(ticker_frame)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _fetch_ticker_technical_frame,
+                    fmp_client=fmp_client,
+                    fmp_cfg=fmp_cfg,
+                    ticker=str(ticker),
+                    indicators=valid_indicators,
+                    date_from=date_from,
+                    date_to=date_to,
+                ): str(ticker)
+                for ticker in tickers
+            }
+            for future in as_completed(futures):
+                ticker_frame = future.result()
+                if ticker_frame is not None:
+                    frames.append(ticker_frame)
 
     if not frames:
         return _empty_technical_frame()
@@ -545,6 +761,11 @@ class QaiPreparer:
         except AlphaVantageError as exc:
             partial_story_payload = getattr(exc, "partial_story_payload", None)
             partial_story_fetch_summary = getattr(exc, "partial_story_fetch_summary", None)
+            allow_partial_story = bool(
+                data_cfg.provider.alphavantage.get("allow_partial_on_error", False)
+            )
+            partial_story_frame_raw = _empty_story_frame()
+            partial_story_frame = _empty_story_frame()
             if partial_story_payload is not None and partial_story_fetch_summary is not None:
                 partial_story_frame_raw = _build_story_rows(partial_story_payload)
                 partial_story_frame = _deduplicate_story_rows(partial_story_frame_raw)
@@ -584,9 +805,37 @@ class QaiPreparer:
                     json.dumps(self.last_run_summary, sort_keys=True),
                 )
                 render_kv_table("QAI Partial Run Summary", self.last_run_summary)
-            raise
-        story_frame_raw = _build_story_rows(story_payload)
-        story_frame = _deduplicate_story_rows(story_frame_raw)
+            elif allow_partial_story:
+                partial_story_fetch_summary = StoryFetchSummary(
+                    window_count=0,
+                    api_calls_planned=0,
+                    api_calls_executed=0,
+                    article_count_raw=0,
+                    time_from=data_cfg.time_from,
+                    time_to=data_cfg.time_to,
+                    divide_range_days=data_cfg.provider.alphavantage.get("divide_range_days"),
+                    requested_limit=data_cfg.provider.alphavantage.get("limit"),
+                    configured_api_calls_per_minute=data_cfg.provider.alphavantage.get(
+                        "api_call_per_minute"
+                    ),
+                )
+                partial_story_frame.to_csv(story_path, index=False)
+
+            if not allow_partial_story:
+                raise
+
+            _announce(
+                "[QAI] Alpha Vantage story fetch failed but allow_partial_on_error=true; "
+                f"continuing with story rows={len(partial_story_frame)}. error={exc}"
+            )
+            story_frame_raw = partial_story_frame_raw
+            story_frame = partial_story_frame
+            story_fetch_summary = partial_story_fetch_summary
+            story_skipped_after_error = True
+        else:
+            story_frame_raw = _build_story_rows(story_payload)
+            story_frame = _deduplicate_story_rows(story_frame_raw)
+            story_skipped_after_error = False
         story_frame.to_csv(story_path, index=False)
         _announce(
             f"[QAI] Saved story dataset to {story_path} "
@@ -602,7 +851,20 @@ class QaiPreparer:
             technical_path = processed_dir / data_cfg.outputs.get(
                 "technical_filename", "technical.csv"
             )
+            fmp_date_from = data_cfg.provider.fmp.get("from") or _api_date(data_cfg.time_from)
+            fmp_date_to = data_cfg.provider.fmp.get("to") or _api_date(data_cfg.time_to)
+            configured_technical_indicators = _as_indicator_configs(
+                data_cfg.provider.fmp.get("technical_indicators", [])
+            )
+            valid_technical_indicators = _valid_technical_indicator_configs(
+                configured_technical_indicators,
+                date_from=fmp_date_from,
+                date_to=fmp_date_to,
+            )
+            estimated_technical_calls = len(tickers) * len(valid_technical_indicators)
             try:
+                economics_frame = _empty_economics_frame()
+                technical_frame = _empty_technical_frame()
                 economics_frame = _fetch_economics_frame(
                     fmp_client=fmp_client,
                     fmp_cfg=data_cfg.provider.fmp,
@@ -616,12 +878,13 @@ class QaiPreparer:
                     time_from=data_cfg.time_from,
                     time_to=data_cfg.time_to,
                 )
-            except FmpError:
+            except FmpError as exc:
                 if not bool(data_cfg.provider.fmp.get("allow_partial_fmp", False)):
                     raise
-                _announce("[QAI] FMP fetch failed; saving empty FMP feature files")
-                economics_frame = _empty_economics_frame()
-                technical_frame = _empty_technical_frame()
+                _announce(
+                    "[QAI] FMP fetch failed but allow_partial_fmp=true; saving available "
+                    f"FMP feature files. error={exc}"
+                )
 
             economics_frame.to_csv(economics_path, index=False)
             technical_frame.to_csv(technical_path, index=False)
@@ -639,6 +902,9 @@ class QaiPreparer:
                 "technical_unique_tickers": int(technical_frame["ticker"].nunique())
                 if not technical_frame.empty and "ticker" in technical_frame
                 else 0,
+                "technical_indicators_configured": len(configured_technical_indicators),
+                "technical_indicators_valid_for_window": len(valid_technical_indicators),
+                "technical_api_calls_estimated": estimated_technical_calls,
                 "economics_output_path": str(economics_path),
                 "technical_output_path": str(technical_path),
             }
@@ -676,6 +942,7 @@ class QaiPreparer:
             **fmp_summary,
             "fundamental_output_path": str(fundamental_path),
             "story_output_path": str(story_path),
+            "story_partial_save": bool(story_skipped_after_error),
         }
         logger.info("[QAI] Run summary: %s", json.dumps(self.last_run_summary, sort_keys=True))
         render_kv_table("QAI Run Summary", self.last_run_summary)

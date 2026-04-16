@@ -17,6 +17,9 @@ outputs/
 logs/
 saves/
 external/
+artifacts/
+figures/
+tables/
 
 *.log
 *.ipynb_checkpoints/

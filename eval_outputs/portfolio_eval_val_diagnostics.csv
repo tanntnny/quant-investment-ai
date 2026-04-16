@@ -1,9 +1,0 @@
-time_range,quarter_end_date,tickers,quarter_price_nonnull,future_price_t4_nonnull,future_price_t1_nonnull
-q4y2023,2023-10-31,9,0,0,0
-q4y2023,2023-11-30,6,0,0,0
-q4y2023,2023-12-31,58,58,58,58
-q1y2024,2024-01-31,9,0,0,0
-q1y2024,2024-02-29,6,0,0,0
-q1y2024,2024-03-31,58,58,58,58
-q2y2024,2024-04-30,9,0,0,0
-q2y2024,2024-05-31,6,0,0,0

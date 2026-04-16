@@ -121,15 +121,17 @@ provider:
     sort: LATEST
     limit: 50
     divide_range_days: null
+    allow_partial_on_error: true
   fmp:
     env_file: ".env"
     api_key_env: "FMP_API_KEY"
     base_url: "https://financialmodelingprep.com/stable"
     api_calls_per_minute: 300
+    max_workers: 8
     timeout_seconds: 30.0
     max_retries: 2
     force_refresh: false
-    allow_partial_fmp: false
+    allow_partial_fmp: true
     economic_indicators:
       - name: GDP
         column: gdp
@@ -190,12 +192,6 @@ provider:
       - name: sma
         periodLength: 50
         timeframe: 1day
-      - name: sma
-        periodLength: 100
-        timeframe: 1day
-      - name: sma
-        periodLength: 200
-        timeframe: 1day
       - name: ema
         periodLength: 5
         timeframe: 1day
@@ -207,12 +203,6 @@ provider:
         timeframe: 1day
       - name: ema
         periodLength: 50
-        timeframe: 1day
-      - name: ema
-        periodLength: 100
-        timeframe: 1day
-      - name: ema
-        periodLength: 200
         timeframe: 1day
       - name: wma
         periodLength: 5
@@ -226,12 +216,6 @@ provider:
       - name: wma
         periodLength: 50
         timeframe: 1day
-      - name: wma
-        periodLength: 100
-        timeframe: 1day
-      - name: wma
-        periodLength: 200
-        timeframe: 1day
       - name: dema
         periodLength: 10
         timeframe: 1day
@@ -241,12 +225,6 @@ provider:
       - name: dema
         periodLength: 50
         timeframe: 1day
-      - name: dema
-        periodLength: 100
-        timeframe: 1day
-      - name: dema
-        periodLength: 200
-        timeframe: 1day
       - name: tema
         periodLength: 10
         timeframe: 1day
@@ -255,12 +233,6 @@ provider:
         timeframe: 1day
       - name: tema
         periodLength: 50
-        timeframe: 1day
-      - name: tema
-        periodLength: 100
-        timeframe: 1day
-      - name: tema
-        periodLength: 200
         timeframe: 1day
       - name: rsi
         periodLength: 7
