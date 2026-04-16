@@ -42,9 +42,10 @@ def run(cfg: DictConfig) -> None:
     ):
         model_cfg["sequence_length"] = datamodule.max_sequence_length
     model = instantiate(model_cfg)
+    trainer_cfg = _resolve_trainer_cfg(cfg.trainer, model)
     loss_fn = instantiate(cfg.loss)
     metric_fn = instantiate(cfg.metrics)
-    trainer = instantiate(cfg.trainer)
+    trainer = instantiate(trainer_cfg)
     optimizer = None
     if getattr(trainer, "requires_optimizer", True):
         try:
@@ -242,6 +243,15 @@ def _count_parameters(model, *, trainable_only: bool = False) -> int:
 
 def _target_name(config: dict[str, object]) -> str:
     return str(config.get("_target_", "-")).rsplit(".", maxsplit=1)[-1]
+
+
+def _resolve_trainer_cfg(trainer_cfg, model):
+    backend = getattr(model, "training_backend", None)
+    if backend == "lightgbm":
+        return {
+            "_target_": "src.trainers.lightgbm_portfolio_trainer.LightGBMPortfolioTrainer"
+        }
+    return trainer_cfg
 
 
 def _average_sequence_length(sequence_lengths: list[int]) -> float:

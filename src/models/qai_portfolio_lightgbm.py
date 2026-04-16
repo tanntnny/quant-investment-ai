@@ -10,6 +10,8 @@ import numpy as np
 class QaiPortfolioLightGBMModel:
     input_dim: int | None = None
     sequence_length: int | None = None
+    training_backend: str = "lightgbm"
+    requires_optimizer: bool = False
     objective: str = "regression"
     n_estimators: int = 100
     learning_rate: float = 0.05

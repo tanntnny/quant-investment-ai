@@ -4,6 +4,8 @@ from pathlib import Path
 
 from hydra import compose, initialize_config_dir
 
+from src.models.qai_portfolio_lightgbm import QaiPortfolioLightGBMModel
+from src.pipelines.train import _resolve_trainer_cfg
 
 def test_prepare_qai_data_experiment_resolves_qai_prepare_flow() -> None:
     config_dir = str((Path(__file__).resolve().parents[1] / "configs").resolve())
@@ -65,3 +67,13 @@ def test_qai_portfolio_model_pair_configs_resolve() -> None:
         lightgbm_cfg.trainer._target_
         == "src.trainers.lightgbm_portfolio_trainer.LightGBMPortfolioTrainer"
     )
+
+
+def test_lightgbm_model_forces_lightgbm_trainer() -> None:
+    trainer_cfg = {"_target_": "src.trainers.pytorch_trainer.PytorchTrainer"}
+    resolved = _resolve_trainer_cfg(
+        trainer_cfg,
+        QaiPortfolioLightGBMModel(input_dim=8, sequence_length=4),
+    )
+
+    assert resolved["_target_"] == "src.trainers.lightgbm_portfolio_trainer.LightGBMPortfolioTrainer"
