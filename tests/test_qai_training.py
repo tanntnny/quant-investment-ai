@@ -101,3 +101,9 @@ def test_lightgbm_portfolio_trainer_smoke(tmp_path: Path) -> None:
 
     assert metrics["epoch"] == 1
     assert "train_portfolio_growth" in metrics
+
+
+def test_lightgbm_portfolio_model_accepts_input_dim() -> None:
+    model = QaiPortfolioLightGBMModel(input_dim=8, n_estimators=2, min_child_samples=1)
+
+    assert model.input_dim == 8
