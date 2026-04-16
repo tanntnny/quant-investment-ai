@@ -1,4 +1,0 @@
-_target_: src.losses.qai_multitask.QaiMultiTaskLoss
-regression_weight: 1.0
-classification_weight: 1.0
-regression_loss: mse

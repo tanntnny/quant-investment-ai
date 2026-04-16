@@ -1,5 +1,0 @@
-# @package _global_
-
-defaults:
-  - override /model: qai_portfolio_bilstm
-  - override /trainer: pytorch

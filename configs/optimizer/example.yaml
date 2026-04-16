@@ -1,2 +1,0 @@
-_target_: src.optimizers.example.ExampleOptimizer
-lr: 0.001
