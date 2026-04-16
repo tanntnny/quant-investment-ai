@@ -13,6 +13,7 @@ from src.losses.qai_multitask import QaiMultiTaskLoss
 from src.metrics.qai_multitask import QaiMultiTaskMetrics
 from src.metrics.qai_portfolio import QaiPortfolioMetrics
 from src.models.qai_attention import QaiAttentionModel
+from src.models import qai_portfolio_lightgbm as qai_portfolio_lightgbm_module
 from src.models.qai_portfolio_lightgbm import QaiPortfolioLightGBMModel
 from src.trainers.lightgbm_portfolio_trainer import LightGBMPortfolioTrainer
 from src.trainers.pytorch_trainer import PytorchTrainer
@@ -99,6 +100,53 @@ def test_lightgbm_portfolio_trainer_smoke(tmp_path: Path) -> None:
         logger=ExampleLogger(),
     )
 
+    assert metrics["epoch"] == 1
+    assert "train_portfolio_growth" in metrics
+
+
+def test_lightgbm_portfolio_trainer_falls_back_without_lightgbm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = build_qai_fixture(tmp_path)
+    datamodule = QaiPortfolioDataModule(
+        train_path=str(paths["train"]),
+        val_path=str(paths["val"]),
+        test_path=str(paths["test"]),
+        price_history_path=str(paths["prices"]),
+        sequence_length=4,
+        batch_size=2,
+        target_horizon=1,
+        horizons=[1],
+    )
+    datamodule.setup()
+
+    original_find_spec = qai_portfolio_lightgbm_module.importlib.util.find_spec
+
+    def fake_find_spec(name: str, *args: object, **kwargs: object) -> object:
+        if name == "lightgbm":
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(
+        qai_portfolio_lightgbm_module.importlib.util,
+        "find_spec",
+        fake_find_spec,
+    )
+
+    trainer = LightGBMPortfolioTrainer()
+    model = QaiPortfolioLightGBMModel(n_estimators=2, min_child_samples=1)
+    metrics = trainer.fit(
+        datamodule=datamodule,
+        model=model,
+        loss_fn=None,
+        metric_fn=QaiPortfolioMetrics(),
+        optimizer=None,
+        scheduler=None,
+        callbacks=ExampleCallbacks(),
+        logger=ExampleLogger(),
+    )
+
+    assert model._backend == "sklearn"
     assert metrics["epoch"] == 1
     assert "train_portfolio_growth" in metrics
 

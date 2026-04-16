@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,30 +25,45 @@ class QaiPortfolioLightGBMModel:
     random_state: int = 123
     temperature: float = 1.0
     _model: Any = field(default=None, init=False, repr=False)
+    _backend: str = field(default="", init=False, repr=False)
 
     def fit(self, samples: list[dict[str, Any]]) -> None:
-        try:
-            import lightgbm as lgb
-        except ImportError as exc:
-            raise RuntimeError(
-                "LightGBM is required for QaiPortfolioLightGBMModel. "
-                "Install the project's lightgbm extra before running this model."
-            ) from exc
-
         x_train, y_train = self._samples_to_xy(samples)
         if x_train.size == 0:
             raise RuntimeError("No LightGBM training rows were generated from portfolio samples.")
-        self._model = lgb.LGBMRegressor(
-            objective=self.objective,
-            n_estimators=self.n_estimators,
-            learning_rate=self.learning_rate,
-            num_leaves=self.num_leaves,
-            max_depth=self.max_depth,
-            min_child_samples=self.min_child_samples,
-            subsample=self.subsample,
-            colsample_bytree=self.colsample_bytree,
-            random_state=self.random_state,
-        )
+        lightgbm_module = self._load_lightgbm_module()
+        if lightgbm_module is not None:
+            self._backend = "lightgbm"
+            self._model = lightgbm_module.LGBMRegressor(
+                objective=self.objective,
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                num_leaves=self.num_leaves,
+                max_depth=self.max_depth,
+                min_child_samples=self.min_child_samples,
+                subsample=self.subsample,
+                colsample_bytree=self.colsample_bytree,
+                random_state=self.random_state,
+            )
+        else:
+            self._backend = "sklearn"
+            warnings.warn(
+                "lightgbm is not installed; falling back to sklearn.HistGradientBoostingRegressor "
+                "for QaiPortfolioLightGBMModel.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            from sklearn.ensemble import HistGradientBoostingRegressor
+
+            self._model = HistGradientBoostingRegressor(
+                loss="squared_error",
+                learning_rate=self.learning_rate,
+                max_iter=self.n_estimators,
+                max_depth=None if self.max_depth < 0 else self.max_depth,
+                min_samples_leaf=self.min_child_samples,
+                random_state=self.random_state,
+                early_stopping=False,
+            )
         self._model.fit(x_train, y_train)
 
     def predict_sample_weights(self, samples: list[dict[str, Any]]) -> list[np.ndarray]:
@@ -90,6 +107,16 @@ class QaiPortfolioLightGBMModel:
         if not rows:
             return np.empty((0, 0), dtype=np.float32), np.empty((0,), dtype=np.float32)
         return np.vstack(rows).astype(np.float32), np.asarray(targets, dtype=np.float32)
+
+    @staticmethod
+    def _load_lightgbm_module() -> Any:
+        if importlib.util.find_spec("lightgbm") is None:
+            return None
+        try:
+            import lightgbm as lgb
+        except ImportError:
+            return None
+        return lgb
 
 
 def _softmax(scores: np.ndarray) -> np.ndarray:
