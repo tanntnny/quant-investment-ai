@@ -14,7 +14,8 @@ outputs:
 ticker_column: "ticker"
 date_column: "date"
 sequence_length: 4
-time_horizon: 1
+resample_frequency: "daily"
+time_horizon: 180
 time_horizontal: null
 train_ratio: 0.7
 val_ratio: 0.15

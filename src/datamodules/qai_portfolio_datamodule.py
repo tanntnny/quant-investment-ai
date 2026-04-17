@@ -11,7 +11,8 @@ from src.datamodules.qai_datamodule import (
     DEFAULT_HORIZONS,
     DEFAULT_METADATA_COLUMNS,
     DEFAULT_TARGET_PRICE_COLUMN,
-    _align_quarter_close_prices,
+    DEFAULT_TARGET_FREQUENCY,
+    _align_target_prices,
     _attach_future_targets,
     _load_price_history,
     _load_split_frame,
@@ -41,6 +42,7 @@ class QaiPortfolioDataModule:
     exclude_columns: list[str] | None = None
     horizons: list[int] = field(default_factory=lambda: list(DEFAULT_HORIZONS))
     target_horizon: int | None = None
+    target_frequency: str = DEFAULT_TARGET_FREQUENCY
     price_field: str = DEFAULT_TARGET_PRICE_COLUMN
     flat_return_threshold: float = 0.02
     batch_size: int = 8
@@ -65,9 +67,21 @@ class QaiPortfolioDataModule:
             raise RuntimeError("PyTorch is required for QaiPortfolioDataModule") from exc
 
         split_frames = {
-            "train": _load_split_frame(self.train_path, "train"),
-            "val": _load_split_frame(self.val_path, "val"),
-            "test": _load_split_frame(self.test_path, "test"),
+            "train": _load_split_frame(
+                self.train_path,
+                "train",
+                target_frequency=self.target_frequency,
+            ),
+            "val": _load_split_frame(
+                self.val_path,
+                "val",
+                target_frequency=self.target_frequency,
+            ),
+            "test": _load_split_frame(
+                self.test_path,
+                "test",
+                target_frequency=self.target_frequency,
+            ),
         }
         combined = (
             pd.concat(split_frames.values(), ignore_index=True)
@@ -76,11 +90,16 @@ class QaiPortfolioDataModule:
         )
 
         price_history = _load_price_history(self.price_history_path, price_field=self.price_field)
-        quarter_prices = _align_quarter_close_prices(price_history, price_field=self.price_field)
+        quarter_prices = _align_target_prices(
+            price_history,
+            price_field=self.price_field,
+            target_frequency=self.target_frequency,
+        )
         targets = _attach_future_targets(
             quarter_prices,
             horizons=self.horizons,
             flat_return_threshold=self.flat_return_threshold,
+            target_frequency=self.target_frequency,
         )
         combined = combined.merge(
             targets,

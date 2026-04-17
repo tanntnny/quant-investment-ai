@@ -10,7 +10,8 @@ exclude_columns:
   - window_ready
   - horizon_target_ready
   - ticker_history_index
-horizons: [1]
+horizons: [1, 7, 30, 90, 180]
+target_frequency: daily
 price_field: Adj. Close
 flat_return_threshold: 0.02
 batch_size: 32

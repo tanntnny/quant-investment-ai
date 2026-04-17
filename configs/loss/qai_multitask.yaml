@@ -2,3 +2,4 @@ _target_: src.losses.qai_multitask.QaiMultiTaskLoss
 regression_weight: 1.0
 classification_weight: 1.0
 regression_loss: mse
+horizon_weights: [1.0, 1.5, 2.0, 3.0, 4.0]

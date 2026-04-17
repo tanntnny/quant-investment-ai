@@ -14,6 +14,7 @@ from src.utils.console import announce, render_kv_table
 logger = logging.getLogger(__name__)
 
 EPSILON = 1e-8
+SUPPORTED_RESAMPLE_FREQUENCIES = {"quarterly", "daily"}
 
 
 def _announce(message: str) -> None:
@@ -43,6 +44,9 @@ class QaiPreprocessPreparer:
         effective_horizon = int(data_cfg.get("time_horizontal") or data_cfg.get("time_horizon", 1))
         sequence_length = int(data_cfg.get("sequence_length", 4))
         min_sequence_points = int(data_cfg.get("min_sequence_points") or sequence_length)
+        resample_frequency = str(data_cfg.get("resample_frequency", "quarterly")).lower()
+        if resample_frequency not in SUPPORTED_RESAMPLE_FREQUENCIES:
+            raise ValueError("resample_frequency must be 'quarterly' or 'daily'")
         _validate_split_ratios(
             float(data_cfg.train_ratio),
             float(data_cfg.val_ratio),
@@ -106,6 +110,8 @@ class QaiPreprocessPreparer:
             )
             merged = _drop_merge_helper_columns(merged)
         merged = merged.sort_values(["ticker", "quarter_end_date"]).reset_index(drop=True)
+        if resample_frequency == "daily":
+            merged = _resample_merged_frame_daily(merged)
 
         story_numeric_columns = [
             column
@@ -182,6 +188,7 @@ class QaiPreprocessPreparer:
             "time_ranges": int(merged["time_range"].nunique()) if not merged.empty else 0,
             "sequence_length": sequence_length,
             "time_horizon": effective_horizon,
+            "resample_frequency": resample_frequency,
             "min_sequence_points": min_sequence_points,
             "train_ratio": float(data_cfg.train_ratio),
             "val_ratio": float(data_cfg.val_ratio),
@@ -541,8 +548,41 @@ def _validate_split_ratios(train_ratio: float, val_ratio: float, test_ratio: flo
         raise ValueError("split ratios must be non-negative")
 
 
-def _to_time_range(value: pd.Timestamp) -> str:
+def _resample_merged_frame_daily(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+
+    daily_groups: list[pd.DataFrame] = []
+    for ticker, ticker_frame in frame.groupby("ticker", sort=False):
+        ticker_frame = ticker_frame.sort_values("quarter_end_date").drop_duplicates(
+            "quarter_end_date",
+            keep="last",
+        )
+        date_index = pd.date_range(
+            start=ticker_frame["quarter_end_date"].min(),
+            end=ticker_frame["quarter_end_date"].max(),
+            freq="D",
+        )
+        daily_frame = ticker_frame.set_index("quarter_end_date").reindex(date_index)
+        daily_frame["ticker"] = str(ticker)
+        daily_frame = daily_frame.ffill()
+        daily_frame["quarter_end_date"] = daily_frame.index.normalize()
+        daily_frame["time_range"] = daily_frame["quarter_end_date"].map(
+            lambda value: _to_time_range(value, resample_frequency="daily")
+        )
+        daily_groups.append(daily_frame.reset_index(drop=True))
+
+    return (
+        pd.concat(daily_groups, ignore_index=True)
+        .sort_values(["ticker", "quarter_end_date"])
+        .reset_index(drop=True)
+    )
+
+
+def _to_time_range(value: pd.Timestamp, *, resample_frequency: str = "quarterly") -> str:
     timestamp = pd.Timestamp(value)
+    if resample_frequency == "daily":
+        return timestamp.strftime("%Y-%m-%d")
     return f"q{timestamp.quarter}y{timestamp.year}"
 
 

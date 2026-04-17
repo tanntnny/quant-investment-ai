@@ -27,6 +27,8 @@ def test_qai_preprocess_experiment_resolves_new_preprocess_flow() -> None:
     assert cfg.preparer._target_ == "src.preparers.qai_preprocess.QaiPreprocessPreparer"
     assert cfg.data.inputs.fundamental_path == "data/cleaned/fundamental.csv"
     assert cfg.data.outputs.preprocessed_filename == "qai_preprocessed.csv"
+    assert cfg.data.resample_frequency == "daily"
+    assert cfg.data.time_horizon == 180
 
 
 def test_qai_train_experiment_resolves_train_flow() -> None:
@@ -36,8 +38,12 @@ def test_qai_train_experiment_resolves_train_flow() -> None:
 
     assert cfg.mode.name == "train"
     assert cfg.data._target_ == "src.datamodules.qai_datamodule.QaiDataModule"
+    assert list(cfg.data.horizons) == [1, 7, 30, 90, 180]
+    assert cfg.data.target_frequency == "daily"
     assert cfg.model._target_ == "src.models.qai_attention.QaiAttentionModel"
+    assert cfg.model.forecast_horizons == 5
     assert cfg.loss._target_ == "src.losses.qai_multitask.QaiMultiTaskLoss"
+    assert list(cfg.loss.horizon_weights) == [1.0, 1.5, 2.0, 3.0, 4.0]
     assert cfg.metrics._target_ == "src.metrics.qai_multitask.QaiMultiTaskMetrics"
     assert cfg.optimizer._target_ == "torch.optim.AdamW"
     assert cfg.trainer._target_ == "src.trainers.pytorch_trainer.PytorchTrainer"

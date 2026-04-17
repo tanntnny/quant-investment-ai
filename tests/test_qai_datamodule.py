@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.datamodules.qai_datamodule import (
     QaiDataModule,
+    _align_target_prices,
     _align_quarter_close_prices,
     _attach_future_targets,
     _load_split_frame,
@@ -56,6 +57,35 @@ def test_future_target_t1_requires_exact_next_quarter(tmp_path: Path) -> None:
     assert pd.isna(first["future_price_t1"])
     assert pd.isna(first["future_return_t1"])
     assert pd.isna(first["class_target_t1"])
+
+
+def test_daily_future_targets_use_calendar_day_horizons(tmp_path: Path) -> None:
+    prices_path = tmp_path / "prices_daily.csv"
+    pd.DataFrame(
+        [
+            {"Ticker": "AAA", "Date": "2024-01-01", "Adj. Close": 100.0},
+            {"Ticker": "AAA", "Date": "2024-01-02", "Adj. Close": 101.0},
+            {"Ticker": "AAA", "Date": "2024-01-08", "Adj. Close": 107.0},
+            {"Ticker": "AAA", "Date": "2024-01-31", "Adj. Close": 130.0},
+        ]
+    ).to_csv(prices_path, index=False, sep=";")
+
+    aligned = _align_target_prices(
+        _load_price_history(prices_path),
+        target_frequency="daily",
+    )
+    targets = _attach_future_targets(
+        aligned,
+        horizons=[1, 7, 30],
+        flat_return_threshold=0.02,
+        target_frequency="daily",
+    )
+
+    first = targets.iloc[0]
+    assert first["time_range"] == "2024-01-01"
+    assert first["future_price_t1"] == 101.0
+    assert first["future_price_t7"] == 107.0
+    assert first["future_price_t30"] == 130.0
 
 
 def test_split_frame_quarter_end_is_canonicalized(tmp_path: Path) -> None:

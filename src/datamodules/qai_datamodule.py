@@ -17,17 +17,42 @@ DEFAULT_EXCLUDE_COLUMNS = {
 }
 DEFAULT_METADATA_COLUMNS = {"ticker", "time_range", "quarter_end_date"}
 DEFAULT_TARGET_PRICE_COLUMN = "Adj. Close"
+DEFAULT_TARGET_FREQUENCY = "quarterly"
 
 
-def _load_split_frame(path: str | Path, split_name: str) -> pd.DataFrame:
+def _normalize_target_frequency(value: str | None) -> str:
+    frequency = (value or DEFAULT_TARGET_FREQUENCY).lower()
+    aliases = {
+        "d": "daily",
+        "day": "daily",
+        "daily": "daily",
+        "q": "quarterly",
+        "quarter": "quarterly",
+        "quarterly": "quarterly",
+    }
+    if frequency not in aliases:
+        raise ValueError("target_frequency must be 'daily' or 'quarterly'")
+    return aliases[frequency]
+
+
+def _load_split_frame(
+    path: str | Path,
+    split_name: str,
+    *,
+    target_frequency: str = DEFAULT_TARGET_FREQUENCY,
+) -> pd.DataFrame:
     frame = pd.read_csv(path)
     frame["split"] = split_name
     frame["quarter_end_date"] = pd.to_datetime(frame["quarter_end_date"], errors="coerce")
     frame = frame.dropna(subset=["ticker", "quarter_end_date"]).copy()
-    # Canonicalize to calendar quarter end so all joins/targets are aligned at decision time t.
-    frame["quarter_end_date"] = (
-        frame["quarter_end_date"].dt.to_period("Q").dt.end_time.dt.normalize()
-    )
+    frequency = _normalize_target_frequency(target_frequency)
+    if frequency == "quarterly":
+        # Canonicalize to calendar quarter end so all joins/targets are aligned at decision time t.
+        frame["quarter_end_date"] = (
+            frame["quarter_end_date"].dt.to_period("Q").dt.end_time.dt.normalize()
+        )
+    else:
+        frame["quarter_end_date"] = frame["quarter_end_date"].dt.normalize()
     frame["ticker"] = frame["ticker"].astype(str)
     frame["time_range"] = frame["time_range"].astype(str)
     return frame
@@ -56,14 +81,31 @@ def _align_quarter_close_prices(
     *,
     price_field: str = DEFAULT_TARGET_PRICE_COLUMN,
 ) -> pd.DataFrame:
+    return _align_target_prices(
+        price_history,
+        price_field=price_field,
+        target_frequency="quarterly",
+    )
+
+
+def _align_target_prices(
+    price_history: pd.DataFrame,
+    *,
+    price_field: str = DEFAULT_TARGET_PRICE_COLUMN,
+    target_frequency: str = DEFAULT_TARGET_FREQUENCY,
+) -> pd.DataFrame:
     if price_history.empty:
         return pd.DataFrame(
             columns=["ticker", "quarter_end_date", "quarter_price", "time_range"]
         )
 
+    frequency = _normalize_target_frequency(target_frequency)
     aligned = price_history.copy()
     aligned["ticker"] = aligned["Ticker"].astype(str)
-    aligned["quarter_end_date"] = aligned["Date"].dt.to_period("Q").dt.end_time.dt.normalize()
+    if frequency == "quarterly":
+        aligned["quarter_end_date"] = aligned["Date"].dt.to_period("Q").dt.end_time.dt.normalize()
+    else:
+        aligned["quarter_end_date"] = aligned["Date"].dt.normalize()
     aligned = (
         aligned.groupby(["ticker", "quarter_end_date"], as_index=False)
         .tail(1)
@@ -72,7 +114,9 @@ def _align_quarter_close_prices(
         .sort_values(["ticker", "quarter_end_date"])
         .reset_index(drop=True)
     )
-    aligned["time_range"] = aligned["quarter_end_date"].map(_to_time_range)
+    aligned["time_range"] = aligned["quarter_end_date"].map(
+        lambda value: _to_time_range(value, target_frequency=frequency)
+    )
     return aligned
 
 
@@ -81,19 +125,24 @@ def _attach_future_targets(
     *,
     horizons: Sequence[int],
     flat_return_threshold: float,
+    target_frequency: str = DEFAULT_TARGET_FREQUENCY,
 ) -> pd.DataFrame:
     if quarter_prices.empty:
         return quarter_prices.copy()
 
+    frequency = _normalize_target_frequency(target_frequency)
     enriched = (
         quarter_prices.sort_values(["ticker", "quarter_end_date"])
         .reset_index(drop=True)
         .copy()
     )
     for horizon in horizons:
-        target_dates = (
-            enriched["quarter_end_date"] + pd.offsets.QuarterEnd(horizon)
-        ).dt.normalize()
+        if frequency == "quarterly":
+            target_dates = (
+                enriched["quarter_end_date"] + pd.offsets.QuarterEnd(horizon)
+            ).dt.normalize()
+        else:
+            target_dates = (enriched["quarter_end_date"] + pd.DateOffset(days=horizon)).dt.normalize()
         enriched[f"future_quarter_end_date_t{horizon}"] = target_dates
 
         lookup = enriched.loc[:, ["ticker", "quarter_end_date", "quarter_price"]].rename(
@@ -129,7 +178,13 @@ def _classify_return(value: float | None, threshold: float) -> int | None:
     return 1
 
 
-def _to_time_range(timestamp: pd.Timestamp) -> str:
+def _to_time_range(
+    timestamp: pd.Timestamp,
+    *,
+    target_frequency: str = DEFAULT_TARGET_FREQUENCY,
+) -> str:
+    if _normalize_target_frequency(target_frequency) == "daily":
+        return pd.Timestamp(timestamp).strftime("%Y-%m-%d")
     quarter = timestamp.quarter
     return f"q{quarter}y{timestamp.year}"
 
@@ -178,6 +233,7 @@ class QaiDataModule:
     feature_columns: list[str] | None = None
     exclude_columns: list[str] | None = None
     horizons: list[int] = field(default_factory=lambda: list(DEFAULT_HORIZONS))
+    target_frequency: str = DEFAULT_TARGET_FREQUENCY
     price_field: str = DEFAULT_TARGET_PRICE_COLUMN
     flat_return_threshold: float = 0.02
     batch_size: int = 32
@@ -200,9 +256,21 @@ class QaiDataModule:
             raise RuntimeError("PyTorch is required for QaiDataModule") from exc
 
         split_frames = {
-            "train": _load_split_frame(self.train_path, "train"),
-            "val": _load_split_frame(self.val_path, "val"),
-            "test": _load_split_frame(self.test_path, "test"),
+            "train": _load_split_frame(
+                self.train_path,
+                "train",
+                target_frequency=self.target_frequency,
+            ),
+            "val": _load_split_frame(
+                self.val_path,
+                "val",
+                target_frequency=self.target_frequency,
+            ),
+            "test": _load_split_frame(
+                self.test_path,
+                "test",
+                target_frequency=self.target_frequency,
+            ),
         }
         combined = (
             pd.concat(split_frames.values(), ignore_index=True)
@@ -211,11 +279,16 @@ class QaiDataModule:
         )
 
         price_history = _load_price_history(self.price_history_path, price_field=self.price_field)
-        quarter_prices = _align_quarter_close_prices(price_history, price_field=self.price_field)
+        quarter_prices = _align_target_prices(
+            price_history,
+            price_field=self.price_field,
+            target_frequency=self.target_frequency,
+        )
         targets = _attach_future_targets(
             quarter_prices,
             horizons=self.horizons,
             flat_return_threshold=self.flat_return_threshold,
+            target_frequency=self.target_frequency,
         )
 
         combined = combined.merge(

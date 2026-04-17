@@ -37,6 +37,26 @@ def test_qai_multitask_loss_smoke() -> None:
     assert float(losses["loss"]) > 0.0
 
 
+def test_qai_multitask_loss_applies_normalized_horizon_weights() -> None:
+    loss_fn = QaiMultiTaskLoss(
+        classification_weight=0.0,
+        horizon_weights=[1.0, 3.0],
+    )
+    outputs = {
+        "price_preds": torch.tensor([[0.0, 0.0]], dtype=torch.float32),
+        "class_logits": torch.randn(1, 2, 3),
+    }
+    batch = {
+        "price_targets": torch.tensor([[1.0, 3.0]], dtype=torch.float32),
+        "class_targets": torch.tensor([[1, 2]], dtype=torch.long),
+    }
+
+    losses = loss_fn(outputs, batch)
+
+    assert losses["regression_loss"].item() == pytest.approx(7.0)
+    assert losses["loss"].item() == pytest.approx(7.0)
+
+
 def test_pytorch_trainer_qai_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     paths = build_qai_fixture(tmp_path)
