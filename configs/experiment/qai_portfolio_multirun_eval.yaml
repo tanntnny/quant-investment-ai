@@ -8,4 +8,4 @@ defaults:
   - override /evaluator: qai_portfolio_multirun
 
 name: qai_portfolio_multirun_eval
-run_dir: multirun/2026-04-17/17-44-01
+run_dir: outputs/qai_portfolio_multirun_evaluation

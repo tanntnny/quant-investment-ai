@@ -30,7 +30,7 @@ source "$REPO_ROOT/scripts/slurm/common.sh"
 
 : "${EXPERIMENT_NAME:=qai_portfolio_multirun_eval}"
 : "${HYDRA_OVERRIDES:=}"
-: "${EVAL_OUTPUT_DIR:=outputs/qai_portfolio_multirun_evaluation}"
+: "${EVAL_OUTPUT_DIR:=multirun/2026-04-17/17-44-01}"
 : "${RUN_ARTIFACTS_DIR:=saves/run_artifacts/qai_portfolio_multirun_eval}"
 export EXPERIMENT_NAME REPO_ROOT EVAL_OUTPUT_DIR
 
