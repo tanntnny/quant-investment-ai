@@ -10,6 +10,7 @@ import yaml
 
 from src.evaluators.qai_portfolio_multirun_evaluator import QaiPortfolioMultirunEvaluator
 from src.models.qai_portfolio_attention import QaiPortfolioAttentionModel
+from src.models.qai_portfolio_bilstm import QaiPortfolioBiLSTMModel
 from tests.qai_fixtures import build_qai_fixture
 
 
@@ -269,6 +270,82 @@ def test_portfolio_multirun_evaluator_uses_last_checkpoint_fallback(tmp_path: Pa
     )
 
     assert metrics["scopes"]["val"]["run_count"] == 1
+
+
+def test_portfolio_multirun_evaluator_recovers_model_from_checkpoint_signature(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _write_indicator_fixture(tmp_path / "data")
+    multirun_root = tmp_path / "multirun"
+    run_dir = _write_run_dir(multirun_root, paths)
+    artifacts_dir = run_dir / "artifacts"
+    train_frame = pd.read_csv(paths["train"])
+    feature_columns = [
+        column
+        for column in train_frame.columns
+        if column
+        not in {
+            "ticker",
+            "time_range",
+            "quarter_end_date",
+            "split",
+            "window_ready",
+            "horizon_target_ready",
+            "ticker_history_index",
+        }
+        and pd.api.types.is_numeric_dtype(train_frame[column])
+    ]
+
+    bilstm_checkpoint_model = QaiPortfolioBiLSTMModel(
+        input_dim=max(len(feature_columns), 1),
+        hidden_dim=36,
+        num_layers=3,
+        dropout=0.0,
+        sequence_length=4,
+    )
+    checkpoint_payload = {"model_state_dict": bilstm_checkpoint_model.state_dict(), "epoch": 1}
+    torch.save(checkpoint_payload, artifacts_dir / "best_checkpoint.pt")
+    torch.save(checkpoint_payload, artifacts_dir / "last_checkpoint.pt")
+
+    evaluator = QaiPortfolioMultirunEvaluator(
+        multirun_root=str(multirun_root),
+        evaluation_scopes=["val"],
+        write_outputs=False,
+    )
+    monkeypatch.setattr(
+        QaiPortfolioMultirunEvaluator,
+        "_build_validation_diagnostics",
+        lambda self, run_cfg=None: (
+            pd.DataFrame([{"time_range": "q1y2020", "quarter_end_date": "2020-03-31", "ticker_count": 1}]),
+            pd.DataFrame(
+                [
+                    {
+                        "time_range": "q1y2020",
+                        "quarter_end_date": "2020-03-31",
+                        "tickers": 1,
+                        "quarter_price_nonnull": 1,
+                        "future_price_t1_nonnull": 1,
+                    }
+                ]
+            ),
+            pd.DataFrame([{"split": "train", "portfolio_samples": 1, "sample_dates": "2020-03-31"}]),
+        ),
+    )
+
+    metrics = evaluator.evaluate(
+        datamodule=None,
+        model=None,
+        metric_fn=None,
+        run_dir=tmp_path / "eval_outputs",
+    )
+
+    assert metrics["scopes"]["val"]["run_count"] == 1
+    assert metrics["scopes"]["val"]["top_strategies"][0]["model_family"] == "bilstm"
+    assert (
+        metrics["scopes"]["val"]["top_strategies"][0]["model_target"]
+        == "src.models.qai_portfolio_bilstm.QaiPortfolioBiLSTMModel"
+    )
 
 
 def test_portfolio_multirun_evaluator_heatmap_handles_duplicate_penalty_rows(tmp_path: Path) -> None:

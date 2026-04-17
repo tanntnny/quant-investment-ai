@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -284,14 +285,115 @@ class QaiPortfolioMultirunEvaluator:
         return datamodule
 
     def _build_model(self, run_cfg: dict, datamodule):
-        model_cfg = dict(run_cfg["model"])
-        if model_cfg.get("input_dim") in {None, "auto"}:
-            model_cfg["input_dim"] = datamodule.feature_dim
-        if model_cfg.get("sequence_length") in {None, "auto"}:
-            model_cfg["sequence_length"] = datamodule.max_sequence_length
-        seed = run_cfg.get("seed", 123)
-        parent_cfg = OmegaConf.create({"seed": seed, "model": model_cfg})
+        return self._build_model_from_cfg(
+            model_cfg=dict(run_cfg["model"]),
+            datamodule=datamodule,
+            seed=run_cfg.get("seed", 123),
+        )
+
+    def _build_model_from_cfg(self, model_cfg: dict[str, Any], datamodule, seed: int = 123):
+        materialized_cfg = dict(model_cfg)
+        if materialized_cfg.get("input_dim") in {None, "auto"}:
+            materialized_cfg["input_dim"] = datamodule.feature_dim
+        if materialized_cfg.get("sequence_length") in {None, "auto"}:
+            materialized_cfg["sequence_length"] = datamodule.max_sequence_length
+        parent_cfg = OmegaConf.create({"seed": seed, "model": materialized_cfg})
         return instantiate(parent_cfg.model)
+
+    def _restore_model_from_checkpoint(self, run_cfg: dict, datamodule, checkpoint: dict, run_dir: Path):
+        state_dict = checkpoint.get("model_state_dict", {})
+        if not state_dict:
+            raise RuntimeError(f"Checkpoint for run {run_dir.name} does not contain model_state_dict.")
+
+        model = self._build_model(run_cfg, datamodule)
+        model_target = self._resolve_model_target(run_cfg)
+        model_family = self._resolve_model_family(run_cfg)
+        try:
+            model.load_state_dict(state_dict)
+            return model, model_target, model_family
+        except RuntimeError as primary_error:
+            inferred_cfg, inferred_family = self._infer_model_cfg_from_state_dict(
+                state_dict=state_dict,
+                datamodule=datamodule,
+                run_cfg=run_cfg,
+            )
+            if inferred_cfg is None:
+                raise primary_error
+            recovered_model = self._build_model_from_cfg(
+                model_cfg=inferred_cfg,
+                datamodule=datamodule,
+                seed=run_cfg.get("seed", 123),
+            )
+            try:
+                recovered_model.load_state_dict(state_dict)
+            except RuntimeError as fallback_error:
+                raise RuntimeError(
+                    f"{primary_error}\nFallback model inference also failed: {fallback_error}"
+                ) from fallback_error
+            recovered_target = self._resolve_model_target({"model": inferred_cfg})
+            announce(
+                f"Recovered run {run_dir.name} model from checkpoint signature: {recovered_target}",
+                style="yellow",
+            )
+            return recovered_model, recovered_target, inferred_family
+
+    def _infer_model_cfg_from_state_dict(
+        self,
+        *,
+        state_dict: dict[str, Any],
+        datamodule,
+        run_cfg: dict,
+    ) -> tuple[dict[str, Any] | None, str]:
+        model_cfg = dict(run_cfg.get("model", {}) or {})
+        keys = set(state_dict.keys())
+
+        if any(key.startswith("encoder.weight_ih_l") for key in keys):
+            embedding_dim = int(state_dict["norm.weight"].numel())
+            hidden_dim = max(1, embedding_dim // 2)
+            input_dim = int(state_dict["encoder.weight_ih_l0"].shape[1])
+            layer_ids = [
+                int(match.group(1))
+                for key in keys
+                if (match := re.match(r"encoder\.weight_ih_l(\d+)$", key))
+            ]
+            num_layers = max(layer_ids) + 1 if layer_ids else int(model_cfg.get("num_layers", 1))
+            inferred = {
+                "_target_": "src.models.qai_portfolio_bilstm.QaiPortfolioBiLSTMModel",
+                "input_dim": input_dim,
+                "hidden_dim": hidden_dim,
+                "num_layers": num_layers,
+                "dropout": float(model_cfg.get("dropout", 0.1)),
+                "sequence_length": datamodule.max_sequence_length,
+            }
+            return inferred, "bilstm"
+
+        if "input_projection.weight" in keys and "position_embedding" in keys:
+            hidden_dim = int(state_dict["input_projection.weight"].shape[0])
+            input_dim = int(state_dict["input_projection.weight"].shape[1])
+            sequence_length = int(state_dict["position_embedding"].shape[1])
+            layer_ids = [
+                int(match.group(1))
+                for key in keys
+                if (match := re.match(r"history_encoder\.layers\.(\d+)\.", key))
+            ]
+            num_layers = max(layer_ids) + 1 if layer_ids else int(model_cfg.get("num_layers", 1))
+            configured_heads = int(model_cfg.get("num_heads", 4))
+            num_heads = configured_heads if hidden_dim % configured_heads == 0 else next(
+                (candidate for candidate in [8, 6, 4, 3, 2, 1] if hidden_dim % candidate == 0),
+                1,
+            )
+            inferred = {
+                "_target_": "src.models.qai_portfolio_attention.QaiPortfolioAttentionModel",
+                "input_dim": input_dim,
+                "hidden_dim": hidden_dim,
+                "num_heads": num_heads,
+                "num_layers": num_layers,
+                "dropout": float(model_cfg.get("dropout", 0.1)),
+                "sequence_length": sequence_length,
+            }
+            return inferred, "attention"
+
+        return None, self._resolve_model_family(run_cfg)
 
     def _resolve_model_target(self, run_cfg: dict) -> str:
         model_cfg = run_cfg.get("model", {}) or {}
@@ -362,14 +464,15 @@ class QaiPortfolioMultirunEvaluator:
         )
 
         datamodule = self._build_datamodule(run_cfg)
-        model = self._build_model(run_cfg, datamodule)
-        model_family = self._resolve_model_family(run_cfg)
-        model_target = self._resolve_model_target(run_cfg)
-        feature_profile = self._feature_profile(datamodule)
-
         checkpoint_path = self._resolve_checkpoint_path(run_dir)
         checkpoint = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model, model_target, model_family = self._restore_model_from_checkpoint(
+            run_cfg=run_cfg,
+            datamodule=datamodule,
+            checkpoint=checkpoint,
+            run_dir=run_dir,
+        )
+        feature_profile = self._feature_profile(datamodule)
         model.to(device)
         model.eval()
 
