@@ -20,7 +20,6 @@ from src.datamodules.qai_datamodule import (
     _load_price_history,
     _load_split_frame,
 )
-from src.models.qai_portfolio_lightgbm import QaiPortfolioLightGBMModel
 from src.utils.console import announce, render_kv_table, render_records_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
@@ -364,18 +363,6 @@ class QaiPortfolioMultirunEvaluator:
         model_target = self._resolve_model_target(run_cfg)
         feature_profile = self._feature_profile(datamodule)
 
-        if getattr(model, "training_backend", None) == "lightgbm":
-            return self._evaluate_lightgbm_run(
-                run_dir=run_dir,
-                run_cfg=run_cfg,
-                datamodule=datamodule,
-                evaluation_scope=evaluation_scope,
-                final_metrics=final_metrics,
-                model_family=model_family,
-                model_target=model_target,
-                feature_profile=feature_profile,
-            )
-
         checkpoint_path = self._resolve_checkpoint_path(run_dir)
         checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -505,143 +492,6 @@ class QaiPortfolioMultirunEvaluator:
             "saved_final_val_effective_holdings": final_metrics.get("val_effective_holdings"),
         }
         return pd.DataFrame(sample_rows), pd.DataFrame(sample_summary_rows), metadata
-
-    def _evaluate_lightgbm_run(
-        self,
-        *,
-        run_dir: Path,
-        run_cfg: dict,
-        datamodule,
-        evaluation_scope: str,
-        final_metrics: dict,
-        model_family: str,
-        model_target: str,
-        feature_profile: dict[str, int],
-    ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-        artifact_path = run_dir / "artifacts" / "model.pkl"
-        if not artifact_path.exists():
-            raise FileNotFoundError(
-                f"LightGBM run {run_dir.name} is missing replayable model artifact: {artifact_path}"
-            )
-        model = QaiPortfolioLightGBMModel.load(artifact_path)
-
-        sample_rows: list[dict[str, Any]] = []
-        sample_summary_rows: list[dict[str, Any]] = []
-        for source_split, samples in self._samples_for_scope(datamodule, evaluation_scope):
-            weights_by_sample = model.predict_sample_weights(samples)
-            for sample, sample_weights in zip(samples, weights_by_sample):
-                ticker_count = int(sample["ticker_count"])
-                if ticker_count == 0:
-                    continue
-
-                valid_weights = np.asarray(sample_weights[:ticker_count], dtype=float)
-                valid_weights = valid_weights / max(valid_weights.sum(), 1e-8)
-                valid_current = sample["current_prices"][:ticker_count].detach().cpu().numpy().astype(float)
-                valid_future = sample["future_prices"][:ticker_count].detach().cpu().numpy().astype(float)
-                equal_weights = np.full(ticker_count, 1.0 / ticker_count, dtype=float)
-                tickers = list(sample["tickers"])[:ticker_count]
-                quarter_end_date = pd.Timestamp(sample["quarter_end_date"]).normalize()
-                future_quarter_end_date = pd.Timestamp(sample["future_quarter_end_date"]).normalize()
-                time_range = str(sample["time_range"])
-
-                weighted_current = float(np.sum(valid_weights * valid_current))
-                weighted_future = float(np.sum(valid_weights * valid_future))
-                benchmark_current = float(np.sum(equal_weights * valid_current))
-                benchmark_future = float(np.sum(equal_weights * valid_future))
-                portfolio_growth = weighted_future / max(weighted_current, 1e-8)
-                benchmark_growth = benchmark_future / max(benchmark_current, 1e-8)
-                growth_alpha = portfolio_growth - benchmark_growth
-                max_weight = float(valid_weights.max())
-                effective_holdings = float(1.0 / max(np.square(valid_weights).sum(), 1e-8))
-                sample_key = f"{source_split}__{time_range}__{quarter_end_date.date()}"
-
-                sample_summary_rows.append(
-                    {
-                        "evaluation_scope": evaluation_scope,
-                        "source_split": source_split,
-                        "run_id": int(run_dir.name),
-                        "sample_key": sample_key,
-                        "time_range": time_range,
-                        "quarter_end_date": quarter_end_date,
-                        "future_quarter_end_date": future_quarter_end_date,
-                        "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
-                        "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
-                        "model_family": model_family,
-                        "model_target": model_target,
-                        **feature_profile,
-                        "ticker_count": ticker_count,
-                        "portfolio_growth": portfolio_growth,
-                        "benchmark_growth": benchmark_growth,
-                        "growth_alpha": growth_alpha,
-                        "max_weight": max_weight,
-                        "effective_holdings": effective_holdings,
-                    }
-                )
-
-                ticker_returns = valid_future / np.maximum(valid_current, 1e-8) - 1.0
-                for ticker, weight, equal_weight, current_price, future_price, ticker_return in zip(
-                    tickers,
-                    valid_weights,
-                    equal_weights,
-                    valid_current,
-                    valid_future,
-                    ticker_returns,
-                ):
-                    sample_rows.append(
-                        {
-                            "evaluation_scope": evaluation_scope,
-                            "source_split": source_split,
-                            "run_id": int(run_dir.name),
-                            "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
-                            "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
-                            "model_family": model_family,
-                            "model_target": model_target,
-                            **feature_profile,
-                            "sample_key": sample_key,
-                            "time_range": time_range,
-                            "quarter_end_date": quarter_end_date,
-                            "future_quarter_end_date": future_quarter_end_date,
-                            "ticker": str(ticker),
-                            "weight": float(weight),
-                            "equal_weight": float(equal_weight),
-                            "current_price": float(current_price),
-                            "future_price": float(future_price),
-                            "ticker_return": float(ticker_return),
-                            "portfolio_growth": portfolio_growth,
-                            "benchmark_growth": benchmark_growth,
-                            "growth_alpha": growth_alpha,
-                            "max_weight": max_weight,
-                            "effective_holdings": effective_holdings,
-                        }
-                    )
-
-        metadata = {
-            "evaluation_scope": evaluation_scope,
-            "run_id": int(run_dir.name),
-            "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
-            "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
-            "model_family": model_family,
-            "model_target": model_target,
-            **feature_profile,
-            "best_epoch": final_metrics.get("epoch"),
-            "final_epoch": final_metrics.get("epoch"),
-            "saved_best_val_growth_alpha": final_metrics.get("val_growth_alpha"),
-            "saved_best_val_effective_holdings": final_metrics.get("val_effective_holdings"),
-            "saved_final_val_growth_alpha": final_metrics.get("val_growth_alpha"),
-            "saved_final_val_effective_holdings": final_metrics.get("val_effective_holdings"),
-        }
-        return pd.DataFrame(sample_rows), pd.DataFrame(sample_summary_rows), metadata
-
-    def _samples_for_scope(self, datamodule, evaluation_scope: str) -> list[tuple[str, list[dict[str, Any]]]]:
-        if evaluation_scope == "val":
-            return [("val", list(datamodule.samples_by_split.get("val", [])))]
-        if evaluation_scope == "all":
-            return [
-                ("train", list(datamodule.samples_by_split.get("train", []))),
-                ("val", list(datamodule.samples_by_split.get("val", []))),
-                ("test", list(datamodule.samples_by_split.get("test", []))),
-            ]
-        raise ValueError(f"Unsupported evaluation_scope: {evaluation_scope}")
 
     def _summarize_scope(
         self,

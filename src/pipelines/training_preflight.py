@@ -43,9 +43,7 @@ def run_training_preflight(
     for split, samples in samples_by_split.items():
         _validate_samples(split, list(samples))
 
-    if getattr(model, "training_backend", None) == "lightgbm":
-        _validate_lightgbm_training_rows(model, train_samples)
-    elif getattr(trainer, "requires_optimizer", True):
+    if getattr(trainer, "requires_optimizer", True):
         _validate_trainable_model(model, optimizer)
         _validate_first_torch_batch(datamodule, model, loss_fn, metric_fn)
 
@@ -115,17 +113,6 @@ def _validate_samples(split: str, samples: list[dict[str, Any]]) -> None:
             _assert_positive_finite_tensor(sample["future_prices"], f"{context}.future_prices")
 
 
-def _validate_lightgbm_training_rows(model, train_samples: list[dict[str, Any]]) -> None:
-    samples_to_xy = getattr(model, "_samples_to_xy", None)
-    if not callable(samples_to_xy):
-        raise TrainingPreflightError("LightGBM model does not expose _samples_to_xy for validation.")
-    x_train, y_train = samples_to_xy(train_samples)
-    if getattr(x_train, "size", 0) == 0 or getattr(y_train, "size", 0) == 0:
-        raise TrainingPreflightError("LightGBM preflight produced zero training rows.")
-    _assert_finite_value(x_train, "lightgbm.x_train")
-    _assert_finite_value(y_train, "lightgbm.y_train")
-
-
 def _validate_trainable_model(model, optimizer) -> None:
     parameters_fn = getattr(model, "parameters", None)
     if not callable(parameters_fn):
@@ -158,7 +145,7 @@ def _validate_first_torch_batch(datamodule, model, loss_fn, metric_fn) -> None:
         features, targets = _split_batch(batch)
         _assert_finite_value(features, "first_train_batch.features")
         outputs = _forward_model(model, features, batch)
-        _assert_finite_value(outputs, "first_train_batch.outputs")
+        _assert_finite_outputs(outputs, batch, "first_train_batch.outputs")
         loss_result = loss_fn(outputs, targets)
         loss = _resolve_loss_tensor(loss_result)
         _assert_finite_value(loss, "first_train_batch.loss")
@@ -187,9 +174,13 @@ def _assert_finite_value(value: Any, name: str) -> None:
         raise TrainingPreflightError(f"{name} is None.")
 
     if hasattr(value, "detach"):
-        finite_mask = value.detach().isfinite()
+        tensor = value.detach()
+        finite_mask = tensor.isfinite()
         if not bool(finite_mask.all().item()):
-            raise TrainingPreflightError(f"{name} contains NaN or infinite values.")
+            details = _torch_nonfinite_details(tensor)
+            raise TrainingPreflightError(
+                f"{name} contains NaN or infinite values. {details}"
+            )
         return
 
     if hasattr(value, "to_numpy"):
@@ -203,7 +194,10 @@ def _assert_finite_value(value: Any, name: str) -> None:
         if array.size == 0:
             raise TrainingPreflightError(f"{name} is empty.")
         if not np.isfinite(array).all():
-            raise TrainingPreflightError(f"{name} contains NaN or infinite values.")
+            details = _numpy_nonfinite_details(array)
+            raise TrainingPreflightError(
+                f"{name} contains NaN or infinite values. {details}"
+            )
         return
 
     if isinstance(value, Mapping):
@@ -221,3 +215,131 @@ def _assert_finite_value(value: Any, name: str) -> None:
             raise TrainingPreflightError(f"{name} contains NaN or infinite values.")
         return
 
+
+def _assert_finite_outputs(outputs: Any, batch: Any, name: str) -> None:
+    if not isinstance(outputs, Mapping):
+        _assert_finite_value(outputs, name)
+        return
+
+    for key, item in outputs.items():
+        item_name = f"{name}.{key}"
+        if key == "scores" and isinstance(batch, Mapping):
+            ticker_attention_mask = batch.get("ticker_attention_mask")
+            if _has_same_shape(item, ticker_attention_mask):
+                _assert_masked_scores_finite(item, ticker_attention_mask, item_name)
+                continue
+        _assert_finite_value(item, item_name)
+
+
+def _assert_masked_scores_finite(scores: Any, mask: Any, name: str) -> None:
+    score_tensor = scores.detach() if hasattr(scores, "detach") else scores
+    mask_tensor = mask.detach().bool() if hasattr(mask, "detach") else mask.bool()
+
+    if score_tensor.numel() == 0:
+        raise TrainingPreflightError(f"{name} is empty.")
+
+    nan_mask = score_tensor.isnan()
+    if bool(nan_mask.any().item()):
+        raise TrainingPreflightError(
+            f"{name} contains NaN values. Masked score diagnostics: "
+            f"{_torch_nonfinite_details(score_tensor)}"
+        )
+
+    valid_scores = score_tensor[mask_tensor]
+    if valid_scores.numel() == 0:
+        raise TrainingPreflightError(
+            f"{name} has no valid tickers according to ticker_attention_mask."
+        )
+    if not bool(valid_scores.isfinite().all().item()):
+        raise TrainingPreflightError(
+            f"{name} contains NaN or infinite values on valid tickers. "
+            f"Valid score diagnostics: {_torch_nonfinite_details(valid_scores)}"
+        )
+
+    invalid_scores = score_tensor[~mask_tensor]
+    if invalid_scores.numel() == 0:
+        return
+
+    invalid_bad = _torch_is_posinf(invalid_scores) | invalid_scores.isnan()
+    if bool(invalid_bad.any().item()):
+        details = _torch_nonfinite_details(invalid_scores)
+        raise TrainingPreflightError(
+            f"{name} contains invalid masked score values. Masked positions may be finite "
+            f"or -inf, but not NaN or +inf. {details}"
+        )
+
+
+def _has_same_shape(value: Any, other: Any) -> bool:
+    return (
+        other is not None
+        and hasattr(value, "shape")
+        and hasattr(other, "shape")
+        and tuple(value.shape) == tuple(other.shape)
+    )
+
+
+def _torch_is_posinf(value: Any) -> Any:
+    try:
+        import torch
+    except ImportError as exc:
+        raise TrainingPreflightError("PyTorch is required for tensor validation.") from exc
+
+    return torch.isposinf(value)
+
+
+def _torch_nonfinite_details(tensor: Any, *, max_examples: int = 5) -> str:
+    cpu_tensor = tensor.detach().cpu() if hasattr(tensor, "detach") else tensor.cpu()
+    nonfinite_mask = ~cpu_tensor.isfinite()
+    nonfinite_count = int(nonfinite_mask.sum().item())
+    nan_count = int(cpu_tensor.isnan().sum().item())
+    posinf_count = int(_torch_is_posinf(cpu_tensor).sum().item())
+    neginf_count = int(_torch_is_neginf(cpu_tensor).sum().item())
+    first_indices = nonfinite_mask.nonzero(as_tuple=False)[:max_examples].tolist()
+    finite_values = cpu_tensor[~nonfinite_mask]
+    finite_summary = "no finite values"
+    if finite_values.numel() > 0:
+        finite_summary = (
+            f"finite_min={float(finite_values.min().item()):.6g}, "
+            f"finite_max={float(finite_values.max().item()):.6g}, "
+            f"finite_mean={float(finite_values.float().mean().item()):.6g}"
+        )
+    return (
+        f"shape={tuple(cpu_tensor.shape)}, nonfinite_count={nonfinite_count}, "
+        f"nan_count={nan_count}, posinf_count={posinf_count}, "
+        f"neginf_count={neginf_count}, "
+        f"first_nonfinite_indices={first_indices}, {finite_summary}."
+    )
+
+
+def _torch_is_neginf(value: Any) -> Any:
+    try:
+        import torch
+    except ImportError as exc:
+        raise TrainingPreflightError("PyTorch is required for tensor validation.") from exc
+
+    return torch.isneginf(value)
+
+
+def _numpy_nonfinite_details(array: Any, *, max_examples: int = 5) -> str:
+    import numpy as np
+
+    nonfinite_mask = ~np.isfinite(array)
+    nonfinite_count = int(nonfinite_mask.sum())
+    nan_count = int(np.isnan(array).sum())
+    posinf_count = int(np.isposinf(array).sum())
+    neginf_count = int(np.isneginf(array).sum())
+    first_indices = np.argwhere(nonfinite_mask)[:max_examples].tolist()
+    finite_values = array[~nonfinite_mask]
+    finite_summary = "no finite values"
+    if finite_values.size > 0:
+        finite_summary = (
+            f"finite_min={float(np.min(finite_values)):.6g}, "
+            f"finite_max={float(np.max(finite_values)):.6g}, "
+            f"finite_mean={float(np.mean(finite_values)):.6g}"
+        )
+    return (
+        f"shape={tuple(array.shape)}, nonfinite_count={nonfinite_count}, "
+        f"nan_count={nan_count}, posinf_count={posinf_count}, "
+        f"neginf_count={neginf_count}, "
+        f"first_nonfinite_indices={first_indices}, {finite_summary}."
+    )

@@ -23,6 +23,6 @@ hydra:
   mode: MULTIRUN
   sweeper:
     params:
-      portfolio_model: lightgbm,attention,bilstm
+      portfolio_model: attention,bilstm
       loss.risk_penalty: 1.0, 10.0, 100.0
       loss.concentration_penalty: 1.0, 10.0, 100.0

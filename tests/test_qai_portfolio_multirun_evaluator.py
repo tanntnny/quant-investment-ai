@@ -174,7 +174,9 @@ def test_portfolio_multirun_evaluator_reports_indicator_profile(tmp_path: Path, 
     assert metrics["scopes"]["val"]["indicator_feature_profile"]["indicator_feature_count"] == 4
 
 
-def test_portfolio_multirun_evaluator_resolves_seed_interpolation(tmp_path: Path) -> None:
+def test_portfolio_multirun_evaluator_builds_attention_model_with_auto_dims(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "data").mkdir(parents=True, exist_ok=True)
     paths = build_qai_fixture(tmp_path / "data")
     evaluator = QaiPortfolioMultirunEvaluator()
@@ -208,17 +210,20 @@ def test_portfolio_multirun_evaluator_resolves_seed_interpolation(tmp_path: Path
         {
             "seed": 777,
             "model": {
-                "_target_": "src.models.qai_portfolio_lightgbm.QaiPortfolioLightGBMModel",
+                "_target_": "src.models.qai_portfolio_attention.QaiPortfolioAttentionModel",
                 "input_dim": "auto",
+                "hidden_dim": 4,
+                "num_heads": 1,
+                "num_layers": 1,
+                "dropout": 0.0,
                 "sequence_length": "auto",
-                "random_state": "${seed}",
-                "n_estimators": 2,
             },
         },
         datamodule,
     )
 
-    assert model.random_state == 777
+    assert model.input_projection.in_features == datamodule.feature_dim
+    assert model.position_embedding.shape[1] == datamodule.max_sequence_length
 
 
 def test_portfolio_multirun_evaluator_uses_last_checkpoint_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -10,13 +10,12 @@ from src.datamodules.qai_datamodule import QaiDataModule
 from src.datamodules.qai_portfolio_datamodule import QaiPortfolioDataModule
 from src.logger.example import ExampleLogger
 from src.losses.qai_multitask import QaiMultiTaskLoss
+from src.losses.qai_portfolio_growth import QaiPortfolioGrowthLoss
 from src.metrics.qai_multitask import QaiMultiTaskMetrics
 from src.metrics.qai_portfolio import QaiPortfolioMetrics
 from src.models.qai_attention import QaiAttentionModel
-from src.models import qai_portfolio_lightgbm as qai_portfolio_lightgbm_module
-from src.models.qai_portfolio_lightgbm import QaiPortfolioLightGBMModel
+from src.models.qai_portfolio_attention import QaiPortfolioAttentionModel
 from src.pipelines.training_preflight import TrainingPreflightError, run_training_preflight
-from src.trainers.lightgbm_portfolio_trainer import LightGBMPortfolioTrainer
 from src.trainers.pytorch_trainer import PytorchTrainer
 from tests.qai_fixtures import build_qai_fixture
 
@@ -75,94 +74,6 @@ def test_pytorch_trainer_qai_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "val_loss" in metrics
 
 
-def test_lightgbm_portfolio_trainer_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("lightgbm")
-    monkeypatch.chdir(tmp_path)
-    paths = build_qai_fixture(tmp_path)
-    datamodule = QaiPortfolioDataModule(
-        train_path=str(paths["train"]),
-        val_path=str(paths["val"]),
-        test_path=str(paths["test"]),
-        price_history_path=str(paths["prices"]),
-        sequence_length=4,
-        batch_size=2,
-        target_horizon=1,
-        horizons=[1],
-    )
-    datamodule.setup()
-
-    trainer = LightGBMPortfolioTrainer()
-    metrics = trainer.fit(
-        datamodule=datamodule,
-        model=QaiPortfolioLightGBMModel(n_estimators=2, min_child_samples=1),
-        loss_fn=None,
-        metric_fn=QaiPortfolioMetrics(),
-        optimizer=None,
-        scheduler=None,
-        callbacks=ExampleCallbacks(),
-        logger=ExampleLogger(),
-    )
-
-    assert metrics["epoch"] == 1
-    assert "train_portfolio_growth" in metrics
-    assert (tmp_path / "artifacts" / "model.pkl").exists()
-
-
-def test_lightgbm_portfolio_trainer_falls_back_without_lightgbm(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    paths = build_qai_fixture(tmp_path)
-    datamodule = QaiPortfolioDataModule(
-        train_path=str(paths["train"]),
-        val_path=str(paths["val"]),
-        test_path=str(paths["test"]),
-        price_history_path=str(paths["prices"]),
-        sequence_length=4,
-        batch_size=2,
-        target_horizon=1,
-        horizons=[1],
-    )
-    datamodule.setup()
-
-    original_find_spec = qai_portfolio_lightgbm_module.importlib.util.find_spec
-
-    def fake_find_spec(name: str, *args: object, **kwargs: object) -> object:
-        if name == "lightgbm":
-            return None
-        return original_find_spec(name, *args, **kwargs)
-
-    monkeypatch.setattr(
-        qai_portfolio_lightgbm_module.importlib.util,
-        "find_spec",
-        fake_find_spec,
-    )
-
-    trainer = LightGBMPortfolioTrainer()
-    model = QaiPortfolioLightGBMModel(n_estimators=2, min_child_samples=1)
-    metrics = trainer.fit(
-        datamodule=datamodule,
-        model=model,
-        loss_fn=None,
-        metric_fn=QaiPortfolioMetrics(),
-        optimizer=None,
-        scheduler=None,
-        callbacks=ExampleCallbacks(),
-        logger=ExampleLogger(),
-    )
-
-    assert model._backend == "sklearn"
-    assert metrics["epoch"] == 1
-    assert "train_portfolio_growth" in metrics
-    assert (tmp_path / "artifacts" / "model.pkl").exists()
-
-
-def test_lightgbm_portfolio_model_accepts_input_dim() -> None:
-    model = QaiPortfolioLightGBMModel(input_dim=8, n_estimators=2, min_child_samples=1)
-
-    assert model.input_dim == 8
-
-
 def test_training_preflight_rejects_reserved_feature_column(tmp_path: Path) -> None:
     paths = build_qai_fixture(tmp_path)
     datamodule = QaiPortfolioDataModule(
@@ -177,15 +88,22 @@ def test_training_preflight_rejects_reserved_feature_column(tmp_path: Path) -> N
     )
     datamodule.setup()
     datamodule.feature_names.append("quarter_end_date_story")
+    model = QaiPortfolioAttentionModel(
+        input_dim=datamodule.feature_dim,
+        hidden_dim=8,
+        num_heads=2,
+        num_layers=1,
+        sequence_length=4,
+    )
 
     with pytest.raises(TrainingPreflightError, match="helper columns"):
         run_training_preflight(
             datamodule=datamodule,
-            model=QaiPortfolioLightGBMModel(n_estimators=2, min_child_samples=1),
-            trainer=LightGBMPortfolioTrainer(),
-            loss_fn=None,
+            model=model,
+            trainer=PytorchTrainer(max_epochs=1, max_steps=1),
+            loss_fn=QaiPortfolioGrowthLoss(),
             metric_fn=QaiPortfolioMetrics(),
-            optimizer=None,
+            optimizer=torch.optim.Adam(model.parameters(), lr=0.001),
         )
 
 
@@ -203,13 +121,80 @@ def test_training_preflight_rejects_nan_features(tmp_path: Path) -> None:
     )
     datamodule.setup()
     datamodule.samples_by_split["train"][0]["features"][0, 0, 0] = float("nan")
+    model = QaiPortfolioAttentionModel(
+        input_dim=datamodule.feature_dim,
+        hidden_dim=8,
+        num_heads=2,
+        num_layers=1,
+        sequence_length=4,
+    )
 
-    with pytest.raises(TrainingPreflightError, match="NaN or infinite"):
+    with pytest.raises(TrainingPreflightError, match="NaN or infinite") as exc_info:
         run_training_preflight(
             datamodule=datamodule,
-            model=QaiPortfolioLightGBMModel(n_estimators=2, min_child_samples=1),
-            trainer=LightGBMPortfolioTrainer(),
-            loss_fn=None,
+            model=model,
+            trainer=PytorchTrainer(max_epochs=1, max_steps=1),
+            loss_fn=QaiPortfolioGrowthLoss(),
             metric_fn=QaiPortfolioMetrics(),
-            optimizer=None,
+            optimizer=torch.optim.Adam(model.parameters(), lr=0.001),
         )
+
+    message = str(exc_info.value)
+    assert "shape=" in message
+    assert "nonfinite_count=1" in message
+    assert "first_nonfinite_indices=" in message
+
+
+def test_training_preflight_allows_masked_portfolio_scores() -> None:
+    class DummyDataModule:
+        feature_dim = 2
+        feature_names = ["feature_a", "feature_b"]
+
+        def __init__(self) -> None:
+            self.samples_by_split = {
+                "train": [
+                    {
+                        "features": torch.ones(2, 4, 2),
+                        "sequence_lengths": [4, 4],
+                        "ticker_count": 2,
+                        "current_prices": torch.tensor([100.0, 200.0]),
+                        "future_prices": torch.tensor([101.0, 202.0]),
+                    }
+                ],
+            }
+
+        def train_dataloader(self):
+            batch = {
+                "features": torch.ones(1, 3, 4, 2),
+                "history_attention_mask": torch.tensor(
+                    [[
+                        [True, True, True, True],
+                        [True, True, True, True],
+                        [False, False, False, False],
+                    ]]
+                ),
+                "ticker_attention_mask": torch.tensor([[True, True, False]]),
+                "current_prices": torch.tensor([[100.0, 200.0, 0.0]]),
+                "future_prices": torch.tensor([[101.0, 202.0, 0.0]]),
+            }
+            return iter([batch])
+
+    datamodule = DummyDataModule()
+    model = QaiPortfolioAttentionModel(
+        input_dim=datamodule.feature_dim,
+        hidden_dim=8,
+        num_heads=2,
+        num_layers=1,
+        sequence_length=4,
+    )
+
+    summary = run_training_preflight(
+        datamodule=datamodule,
+        model=model,
+        trainer=PytorchTrainer(max_epochs=1, max_steps=1),
+        loss_fn=QaiPortfolioGrowthLoss(),
+        metric_fn=QaiPortfolioMetrics(),
+        optimizer=torch.optim.Adam(model.parameters(), lr=0.001),
+    )
+
+    assert summary["status"] == "passed"

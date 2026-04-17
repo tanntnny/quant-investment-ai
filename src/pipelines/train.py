@@ -5,7 +5,10 @@ from pathlib import Path
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
-from src.pipelines.training_preflight import run_training_preflight
+from src.pipelines.training_preflight import (
+    TrainingPreflightError,
+    run_training_preflight,
+)
 from src.utils.console import announce, render_kv_table, render_records_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
@@ -43,10 +46,9 @@ def run(cfg: DictConfig) -> None:
     ):
         model_cfg["sequence_length"] = datamodule.max_sequence_length
     model = instantiate(model_cfg)
-    trainer_cfg = _resolve_trainer_cfg(cfg.trainer, model)
     loss_fn = instantiate(cfg.loss)
     metric_fn = instantiate(cfg.metrics)
-    trainer = instantiate(trainer_cfg)
+    trainer = instantiate(cfg.trainer)
     optimizer = None
     if getattr(trainer, "requires_optimizer", True):
         try:
@@ -63,14 +65,27 @@ def run(cfg: DictConfig) -> None:
     callbacks = instantiate(cfg.callbacks)
     logger = instantiate(cfg.logger)
 
-    preflight_summary = run_training_preflight(
-        datamodule=datamodule,
-        model=model,
-        trainer=trainer,
-        loss_fn=loss_fn,
-        metric_fn=metric_fn,
-        optimizer=optimizer,
-    )
+    try:
+        preflight_summary = run_training_preflight(
+            datamodule=datamodule,
+            model=model,
+            trainer=trainer,
+            loss_fn=loss_fn,
+            metric_fn=metric_fn,
+            optimizer=optimizer,
+        )
+    except TrainingPreflightError as exc:
+        announce("QAI training preflight failed", style="bold red")
+        render_kv_table(
+            "QAI Training Preflight Failure",
+            {
+                "error": exc,
+                "model": model.__class__.__name__,
+                "trainer": trainer.__class__.__name__,
+                "feature_dim": getattr(datamodule, "feature_dim", "-"),
+            },
+        )
+        raise
     render_kv_table("QAI Training Preflight", preflight_summary)
 
     run_dir = Path.cwd()
@@ -256,15 +271,6 @@ def _count_parameters(model, *, trainable_only: bool = False) -> int:
 
 def _target_name(config: dict[str, object]) -> str:
     return str(config.get("_target_", "-")).rsplit(".", maxsplit=1)[-1]
-
-
-def _resolve_trainer_cfg(trainer_cfg, model):
-    backend = getattr(model, "training_backend", None)
-    if backend == "lightgbm":
-        return {
-            "_target_": "src.trainers.lightgbm_portfolio_trainer.LightGBMPortfolioTrainer"
-        }
-    return trainer_cfg
 
 
 def _average_sequence_length(sequence_lengths: list[int]) -> float:
