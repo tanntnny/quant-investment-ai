@@ -31,8 +31,9 @@ source "$REPO_ROOT/scripts/slurm/common.sh"
 : "${EXPERIMENT_NAME:=qai_portfolio_multirun_eval}"
 : "${HYDRA_OVERRIDES:=}"
 : "${EVAL_OUTPUT_DIR:=multirun/2026-04-17/17-44-01}"
+: "${MULTIRUN_ROOT:=$EVAL_OUTPUT_DIR}"
 : "${RUN_ARTIFACTS_DIR:=saves/run_artifacts/qai_portfolio_multirun_eval}"
-export EXPERIMENT_NAME REPO_ROOT EVAL_OUTPUT_DIR
+export EXPERIMENT_NAME REPO_ROOT EVAL_OUTPUT_DIR MULTIRUN_ROOT
 
 log_eval_start() {
   python - <<'PY'
@@ -52,10 +53,13 @@ table.add_row("Job ID", os.environ.get("SLURM_JOB_ID", "local"))
 table.add_row("Node List", os.environ.get("SLURM_JOB_NODELIST", "local"))
 table.add_row("Experiment", os.environ["EXPERIMENT_NAME"])
 table.add_row("Repository", os.environ["REPO_ROOT"])
+table.add_row("Multirun Root", os.environ["MULTIRUN_ROOT"])
 table.add_row("Eval Output Dir", os.environ["EVAL_OUTPUT_DIR"])
 table.add_row(
     "Command",
-    f"python -m src.main experiment={os.environ['EXPERIMENT_NAME']}",
+    "python -m src.main "
+    f"experiment={os.environ['EXPERIMENT_NAME']} "
+    f"evaluator.multirun_root={os.environ['MULTIRUN_ROOT']}",
 )
 console.print(table)
 PY
@@ -71,6 +75,7 @@ log_eval_start
 
 python -m src.main \
   "experiment=${EXPERIMENT_NAME}" \
+  "evaluator.multirun_root=${MULTIRUN_ROOT}" \
   "${extra_args[@]}"
 
 mkdir -p "$RUN_ARTIFACTS_DIR"
