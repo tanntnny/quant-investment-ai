@@ -12,7 +12,7 @@ defaults:
 name: qai_portfolio_train
 
 trainer:
-  max_epochs: 500
+  max_epochs: 100
   accelerator: auto
 
 loss:
