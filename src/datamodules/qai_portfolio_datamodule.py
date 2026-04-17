@@ -58,6 +58,12 @@ class QaiPortfolioDataModule:
     sequence_lengths_by_split: dict[str, list[int]] = field(init=False, default_factory=dict)
     ticker_counts_by_split: dict[str, list[int]] = field(init=False, default_factory=dict)
     feature_names: list[str] = field(init=False, default_factory=list)
+    target_match_summary: dict[str, dict[str, int | float | str]] = field(
+        init=False, default_factory=dict
+    )
+    sample_quality_by_split: dict[str, dict[str, int | float | str]] = field(
+        init=False, default_factory=dict
+    )
 
     def setup(self) -> None:
         try:
@@ -89,7 +95,12 @@ class QaiPortfolioDataModule:
             .reset_index(drop=True)
         )
 
-        price_history = _load_price_history(self.price_history_path, price_field=self.price_field)
+        price_history = _filter_price_history_for_portfolio_frame(
+            _load_price_history(self.price_history_path, price_field=self.price_field),
+            frame=combined,
+            horizons=self.horizons,
+            target_frequency=self.target_frequency,
+        )
         quarter_prices = _align_target_prices(
             price_history,
             price_field=self.price_field,
@@ -113,12 +124,20 @@ class QaiPortfolioDataModule:
             exclude_columns=(self.exclude_columns or []) + list(DEFAULT_EXCLUDE_COLUMNS),
         )
         target_horizon = self.target_horizon or max(self.horizons)
+        future_price_column = f"future_price_t{target_horizon}"
+        future_quarter_end_date_column = f"future_quarter_end_date_t{target_horizon}"
+        target_match_summary = _summarize_portfolio_target_matches(
+            frame=combined,
+            future_price_column=future_price_column,
+            future_quarter_end_date_column=future_quarter_end_date_column,
+        )
         samples_by_split = _build_portfolio_samples_by_split(
             frame=combined,
             feature_columns=feature_names,
             sequence_length=self.sequence_length,
             target_horizon=target_horizon,
         )
+        sample_quality_by_split = _summarize_portfolio_sample_quality(samples_by_split)
 
         self._torch = torch
         self._dataloader_cls = DataLoader
@@ -126,6 +145,8 @@ class QaiPortfolioDataModule:
         self.split_frames = split_frames
         self.combined_frame = combined
         self.samples_by_split = samples_by_split
+        self.target_match_summary = target_match_summary
+        self.sample_quality_by_split = sample_quality_by_split
         self.sequence_lengths_by_split = {
             split: [int(length) for sample in samples for length in sample["sequence_lengths"]]
             for split, samples in samples_by_split.items()
@@ -222,6 +243,35 @@ class QaiPortfolioDataModule:
         }
 
 
+def _filter_price_history_for_portfolio_frame(
+    price_history: pd.DataFrame,
+    *,
+    frame: pd.DataFrame,
+    horizons: Sequence[int],
+    target_frequency: str,
+) -> pd.DataFrame:
+    if price_history.empty or frame.empty:
+        return price_history
+
+    tickers = set(frame["ticker"].astype(str).unique())
+    min_date = frame["quarter_end_date"].min()
+    max_date = frame["quarter_end_date"].max()
+    if pd.isna(min_date) or pd.isna(max_date):
+        return price_history.loc[price_history["Ticker"].astype(str).isin(tickers)].copy()
+
+    max_horizon = max((int(horizon) for horizon in horizons), default=0)
+    if target_frequency.lower() in {"d", "day", "daily"}:
+        max_target_date = max_date + pd.DateOffset(days=max_horizon)
+    else:
+        max_target_date = max_date + pd.offsets.QuarterEnd(max_horizon)
+
+    return price_history.loc[
+        price_history["Ticker"].astype(str).isin(tickers)
+        & (price_history["Date"] >= min_date)
+        & (price_history["Date"] <= max_target_date)
+    ].copy()
+
+
 def _build_portfolio_samples_by_split(
     *,
     frame: pd.DataFrame,
@@ -238,10 +288,13 @@ def _build_portfolio_samples_by_split(
     future_price_column = f"future_price_t{target_horizon}"
     future_quarter_end_date_column = f"future_quarter_end_date_t{target_horizon}"
 
-    combined_by_ticker = {
-        ticker: ticker_frame.sort_values("quarter_end_date").reset_index(drop=True).copy()
-        for ticker, ticker_frame in frame.groupby("ticker", sort=False)
-    }
+    combined_by_ticker = {}
+    for ticker, ticker_frame in frame.groupby("ticker", sort=False):
+        sorted_ticker_frame = ticker_frame.sort_values("quarter_end_date").reset_index(drop=True)
+        combined_by_ticker[str(ticker)] = {
+            "dates": sorted_ticker_frame["quarter_end_date"],
+            "features": sorted_ticker_frame.loc[:, feature_columns].to_numpy(dtype="float32"),
+        }
 
     for split, split_frame in frame.groupby("split", sort=False):
         valid_rows = split_frame.loc[
@@ -257,18 +310,18 @@ def _build_portfolio_samples_by_split(
         ):
             ticker_records: list[dict[str, Any]] = []
             for row in group.sort_values("ticker").itertuples(index=False):
-                ticker_frame = combined_by_ticker[str(row.ticker)]
-                history = ticker_frame.loc[
-                    ticker_frame["quarter_end_date"] <= row.quarter_end_date
-                ].copy()
-                if len(history) < sequence_length:
+                ticker_history = combined_by_ticker[str(row.ticker)]
+                row_position = int(
+                    ticker_history["dates"].searchsorted(row.quarter_end_date, side="right") - 1
+                )
+                history_start = row_position - sequence_length + 1
+                if history_start < 0:
                     continue
-                history = history.tail(sequence_length)
-                feature_array = history.loc[:, feature_columns].to_numpy(dtype="float32")
+                feature_array = ticker_history["features"][history_start : row_position + 1]
                 ticker_records.append(
                     {
                         "ticker": str(row.ticker),
-                        "sequence_length": len(history),
+                        "sequence_length": len(feature_array),
                         "features": torch.tensor(feature_array, dtype=torch.float32),
                         "current_price": float(row.quarter_price),
                         "future_price": float(getattr(row, future_price_column)),
@@ -320,3 +373,88 @@ def _build_portfolio_samples_by_split(
             )
 
     return samples_by_split
+
+
+def _summarize_portfolio_target_matches(
+    *,
+    frame: pd.DataFrame,
+    future_price_column: str,
+    future_quarter_end_date_column: str,
+) -> dict[str, dict[str, int | float | str]]:
+    summary: dict[str, dict[str, int | float | str]] = {}
+    for split in ("train", "val", "test"):
+        split_frame = frame.loc[frame["split"] == split]
+        if split_frame.empty:
+            summary[split] = {
+                "rows": 0,
+                "window_ready_rows": 0,
+                "horizon_ready_rows": 0,
+                "target_price_rows": 0,
+                "valid_target_rows": 0,
+                "target_match_rate": 0.0,
+                "valid_target_rate": 0.0,
+            }
+            continue
+
+        target_ready = (
+            split_frame[future_price_column].notna()
+            & split_frame[future_quarter_end_date_column].notna()
+            & split_frame["quarter_price"].notna()
+        )
+        valid = (
+            split_frame["window_ready"].fillna(False)
+            & split_frame["horizon_target_ready"].fillna(False)
+            & target_ready
+        )
+        row_count = int(len(split_frame))
+        target_count = int(target_ready.sum())
+        valid_count = int(valid.sum())
+        summary[split] = {
+            "rows": row_count,
+            "window_ready_rows": int(split_frame["window_ready"].fillna(False).sum()),
+            "horizon_ready_rows": int(split_frame["horizon_target_ready"].fillna(False).sum()),
+            "target_price_rows": target_count,
+            "valid_target_rows": valid_count,
+            "target_match_rate": target_count / max(row_count, 1),
+            "valid_target_rate": valid_count / max(row_count, 1),
+        }
+    return summary
+
+
+def _summarize_portfolio_sample_quality(
+    samples_by_split: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, int | float | str]]:
+    summary: dict[str, dict[str, int | float | str]] = {}
+    for split in ("train", "val", "test"):
+        samples = samples_by_split.get(split, [])
+        ticker_counts = [int(sample["ticker_count"]) for sample in samples]
+        growth_values: list[float] = []
+        for sample in samples:
+            current_prices = sample["current_prices"]
+            future_prices = sample["future_prices"]
+            growth = future_prices / current_prices.clamp_min(1e-8)
+            growth_values.extend(float(value) for value in growth.tolist())
+
+        if not growth_values:
+            summary[split] = {
+                "samples": int(len(samples)),
+                "asset_targets": 0,
+                "avg_tickers_per_sample": 0.0,
+                "min_asset_growth": "n/a",
+                "max_asset_growth": "n/a",
+                "mean_asset_growth": "n/a",
+                "std_asset_growth": "n/a",
+            }
+            continue
+
+        growth_series = pd.Series(growth_values, dtype="float64")
+        summary[split] = {
+            "samples": int(len(samples)),
+            "asset_targets": int(len(growth_values)),
+            "avg_tickers_per_sample": float(sum(ticker_counts) / max(len(ticker_counts), 1)),
+            "min_asset_growth": float(growth_series.min()),
+            "max_asset_growth": float(growth_series.max()),
+            "mean_asset_growth": float(growth_series.mean()),
+            "std_asset_growth": float(growth_series.std(ddof=0)),
+        }
+    return summary

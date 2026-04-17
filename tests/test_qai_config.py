@@ -65,8 +65,15 @@ def test_qai_portfolio_model_pair_configs_resolve() -> None:
         attention_cfg.model._target_
         == "src.models.qai_portfolio_attention.QaiPortfolioAttentionModel"
     )
+    assert attention_cfg.data.target_frequency == "daily"
+    assert attention_cfg.model.hidden_dim == 192
+    assert attention_cfg.model.num_heads == 8
+    assert attention_cfg.model.num_layers == 3
     assert attention_cfg.trainer._target_ == "src.trainers.pytorch_trainer.PytorchTrainer"
     assert bilstm_cfg.model._target_ == "src.models.qai_portfolio_bilstm.QaiPortfolioBiLSTMModel"
+    assert bilstm_cfg.data.target_frequency == "daily"
+    assert bilstm_cfg.model.hidden_dim == 128
+    assert bilstm_cfg.model.num_layers == 3
     assert bilstm_cfg.trainer._target_ == "src.trainers.pytorch_trainer.PytorchTrainer"
 
 

@@ -165,6 +165,43 @@ def test_training_preflight_rejects_nan_features(tmp_path: Path) -> None:
     assert "first_nonfinite_indices=" in message
 
 
+def test_training_preflight_reports_portfolio_target_diagnostics(tmp_path: Path) -> None:
+    paths = build_qai_fixture(tmp_path)
+    datamodule = QaiPortfolioDataModule(
+        train_path=str(paths["train"]),
+        val_path=str(paths["val"]),
+        test_path=str(paths["test"]),
+        price_history_path=str(paths["prices"]),
+        sequence_length=4,
+        batch_size=2,
+        target_frequency="daily",
+        target_horizon=1,
+        horizons=[1],
+    )
+    datamodule.setup()
+    model = QaiPortfolioAttentionModel(
+        input_dim=datamodule.feature_dim,
+        hidden_dim=8,
+        num_heads=2,
+        num_layers=1,
+        sequence_length=4,
+    )
+
+    with pytest.raises(TrainingPreflightError, match="Portfolio target diagnostics") as exc_info:
+        run_training_preflight(
+            datamodule=datamodule,
+            model=model,
+            trainer=PytorchTrainer(max_epochs=1, max_steps=1),
+            loss_fn=QaiPortfolioGrowthLoss(),
+            metric_fn=QaiPortfolioMetrics(),
+            optimizer=torch.optim.Adam(model.parameters(), lr=0.001),
+        )
+
+    message = str(exc_info.value)
+    assert "target_frequency=daily" in message
+    assert "train_target_price_rows=0" in message
+
+
 def test_training_preflight_allows_masked_portfolio_scores() -> None:
     class DummyDataModule:
         feature_dim = 2

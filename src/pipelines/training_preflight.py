@@ -37,7 +37,11 @@ def run_training_preflight(
     samples_by_split = getattr(datamodule, "samples_by_split", {}) or {}
     train_samples = list(samples_by_split.get("train", []))
     if not train_samples:
-        raise TrainingPreflightError("Training split has no samples; refusing to start training.")
+        diagnostics = _format_no_train_sample_diagnostics(datamodule)
+        raise TrainingPreflightError(
+            "Training split has no samples; refusing to start training."
+            f"{diagnostics}"
+        )
 
     sample_counts = {split: len(list(samples_by_split.get(split, []))) for split in ("train", "val", "test")}
     for split, samples in samples_by_split.items():
@@ -56,6 +60,8 @@ def run_training_preflight(
         "train_samples": sample_counts.get("train", 0),
         "val_samples": sample_counts.get("val", 0),
         "test_samples": sample_counts.get("test", 0),
+        "portfolio_target_match_summary": getattr(datamodule, "target_match_summary", {}),
+        "portfolio_sample_quality": getattr(datamodule, "sample_quality_by_split", {}),
     }
 
 
@@ -82,6 +88,25 @@ def _assert_positive_int(name: str, value: Any) -> None:
         raise TrainingPreflightError(f"{name} must be a positive integer; got {value!r}.") from exc
     if numeric_value <= 0:
         raise TrainingPreflightError(f"{name} must be positive; got {numeric_value}.")
+
+
+def _format_no_train_sample_diagnostics(datamodule) -> str:
+    target_match_summary = getattr(datamodule, "target_match_summary", None)
+    if not target_match_summary:
+        return ""
+
+    train_summary = target_match_summary.get("train", {})
+    target_frequency = getattr(datamodule, "target_frequency", "-")
+    target_horizon = getattr(datamodule, "target_horizon", "-")
+    return (
+        " Portfolio target diagnostics: "
+        f"target_frequency={target_frequency}, target_horizon={target_horizon}, "
+        f"train_rows={train_summary.get('rows', '-')}, "
+        f"train_window_ready_rows={train_summary.get('window_ready_rows', '-')}, "
+        f"train_horizon_ready_rows={train_summary.get('horizon_ready_rows', '-')}, "
+        f"train_target_price_rows={train_summary.get('target_price_rows', '-')}, "
+        f"train_valid_target_rows={train_summary.get('valid_target_rows', '-')}."
+    )
 
 
 def _validate_samples(split: str, samples: list[dict[str, Any]]) -> None:

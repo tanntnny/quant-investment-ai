@@ -10,8 +10,10 @@ env/
 
 data/raw/
 data/cleaned/
-data/interim/
 data/processed/
+data/interim/
+data/preprocessed/
+
 reports/figures/
 reports/tables/
 outputs/
