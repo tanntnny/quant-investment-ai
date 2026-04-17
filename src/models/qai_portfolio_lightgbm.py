@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import pickle
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -75,9 +77,31 @@ class QaiPortfolioLightGBMModel:
             features = sample["features"].detach().cpu().numpy()
             ticker_count = int(sample["ticker_count"])
             flat_features = features[:ticker_count].reshape(ticker_count, -1)
+            if not np.isfinite(flat_features).all():
+                raise RuntimeError("LightGBM prediction features contain NaN or infinite values.")
             scores = np.asarray(self._model.predict(flat_features), dtype=np.float64)
+            if not np.isfinite(scores).all():
+                raise RuntimeError("LightGBM prediction scores contain NaN or infinite values.")
             weights_by_sample.append(_softmax(scores / max(self.temperature, 1e-8)))
         return weights_by_sample
+
+    def save(self, path: str | Path) -> None:
+        if self._model is None:
+            raise RuntimeError("Cannot save an unfitted QaiPortfolioLightGBMModel.")
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as handle:
+            pickle.dump(self, handle)
+
+    @staticmethod
+    def load(path: str | Path) -> "QaiPortfolioLightGBMModel":
+        with Path(path).open("rb") as handle:
+            model = pickle.load(handle)
+        if not isinstance(model, QaiPortfolioLightGBMModel):
+            raise RuntimeError(f"Unexpected LightGBM model artifact type: {type(model)!r}")
+        if model._model is None:
+            raise RuntimeError("Loaded LightGBM model artifact is not fitted.")
+        return model
 
     def parameters(self) -> list[Any]:
         return []
@@ -100,10 +124,20 @@ class QaiPortfolioLightGBMModel:
             for ticker_idx in range(ticker_count):
                 current_price = float(current_prices[ticker_idx])
                 future_price = float(future_prices[ticker_idx])
-                if current_price <= 0 or not np.isfinite(current_price + future_price):
-                    continue
-                rows.append(features[ticker_idx].reshape(-1))
-                targets.append((future_price / current_price) - 1.0)
+                flat_features = features[ticker_idx].reshape(-1)
+                if current_price <= 0:
+                    raise RuntimeError("LightGBM training row has a non-positive current price.")
+                if future_price <= 0:
+                    raise RuntimeError("LightGBM training row has a non-positive future price.")
+                if not np.isfinite(current_price + future_price):
+                    raise RuntimeError("LightGBM training row has a non-finite price target.")
+                if not np.isfinite(flat_features).all():
+                    raise RuntimeError("LightGBM training features contain NaN or infinite values.")
+                target = (future_price / current_price) - 1.0
+                if not np.isfinite(target):
+                    raise RuntimeError("LightGBM training target contains NaN or infinite values.")
+                rows.append(flat_features)
+                targets.append(target)
         if not rows:
             return np.empty((0, 0), dtype=np.float32), np.empty((0,), dtype=np.float32)
         return np.vstack(rows).astype(np.float32), np.asarray(targets, dtype=np.float32)

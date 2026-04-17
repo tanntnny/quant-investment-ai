@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import shutil
 from pathlib import Path
 
@@ -87,6 +88,7 @@ class PytorchTrainer:
                 outputs = _forward_model(model, features, batch)
                 loss_result = loss_fn(outputs, targets)
                 loss = _resolve_loss_tensor(loss_result)
+                _assert_finite_tensor(loss, "train loss")
                 loss.backward()
                 optimizer.step()
                 if scheduler is not None:
@@ -94,6 +96,10 @@ class PytorchTrainer:
 
                 with torch.no_grad():
                     metric_values = metric_fn(outputs, targets)
+                _assert_finite_metrics(
+                    {"loss": loss.detach(), **_as_metric_dict(loss_result), **_as_metric_dict(metric_values)},
+                    context="train metrics",
+                )
 
                 _accumulate_metrics(
                     train_aggregates,
@@ -114,7 +120,16 @@ class PytorchTrainer:
                         features, targets = _split_batch(batch)
                         outputs = _forward_model(model, features, batch)
                         loss_result = loss_fn(outputs, targets)
+                        _assert_finite_tensor(_resolve_loss_tensor(loss_result), "validation loss")
                         metric_values = metric_fn(outputs, targets)
+                        _assert_finite_metrics(
+                            {
+                                "loss": _resolve_loss_tensor(loss_result).detach(),
+                                **_as_metric_dict(loss_result),
+                                **_as_metric_dict(metric_values),
+                            },
+                            context="validation metrics",
+                        )
                         _accumulate_metrics(
                             val_aggregates,
                             {
@@ -135,6 +150,7 @@ class PytorchTrainer:
                 epoch_metrics.update(
                     _prefix_metrics(_average_metrics(val_aggregates, val_steps), "val_")
                 )
+            _assert_finite_metrics(epoch_metrics, context=f"epoch {epoch} metrics")
             epoch_history.append(epoch_metrics)
             logger.log_metrics(epoch_metrics)
             _save_checkpoint(
@@ -266,6 +282,32 @@ def _accumulate_metrics(aggregates: dict[str, float], values: dict[str, object])
         if hasattr(value, "item"):
             value = value.item()
         aggregates[key] = aggregates.get(key, 0.0) + float(value)
+
+
+def _assert_finite_tensor(value, context: str) -> None:
+    if hasattr(value, "detach"):
+        if not bool(value.detach().isfinite().all().item()):
+            raise RuntimeError(f"PytorchTrainer produced non-finite {context}.")
+        return
+    if isinstance(value, (int, float)) and not math.isfinite(float(value)):
+        raise RuntimeError(f"PytorchTrainer produced non-finite {context}.")
+
+
+def _assert_finite_metrics(values: dict[str, object], *, context: str) -> None:
+    bad_keys: list[str] = []
+    for key, value in values.items():
+        if value is None:
+            continue
+        if hasattr(value, "detach"):
+            if not bool(value.detach().isfinite().all().item()):
+                bad_keys.append(key)
+            continue
+        if hasattr(value, "item"):
+            value = value.item()
+        if isinstance(value, (int, float)) and not math.isfinite(float(value)):
+            bad_keys.append(key)
+    if bad_keys:
+        raise RuntimeError(f"PytorchTrainer produced non-finite {context}: {bad_keys}")
 
 
 def _average_metrics(aggregates: dict[str, float], steps: int) -> dict[str, float]:

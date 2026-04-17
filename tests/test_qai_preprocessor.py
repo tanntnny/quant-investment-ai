@@ -223,6 +223,10 @@ def test_qai_preprocess_preparer_builds_merged_table_and_metadata(tmp_path: Path
     assert metadata["technical_columns"] == ["tech_rsi_14_1day"]
     assert "econ_gdp" in merged.columns
     assert "tech_rsi_14_1day" in merged.columns
+    assert "quarter_end_date_story" not in merged.columns
+    assert "quarter_end_date_economics" not in merged.columns
+    assert "quarter_end_date_technical" not in merged.columns
+    assert "quarter_end_date_story" not in metadata["feature_columns"]
     aaa_q2 = merged.loc[(merged["ticker"] == "AAA") & (merged["time_range"] == "q2y2024")].iloc[0]
     assert aaa_q2["story_count"] == pytest.approx(-0.5773502691896258)
     assert aaa_q2["ticker_sentiment_score"] == pytest.approx(-0.5773502691896258)

@@ -5,6 +5,7 @@ from pathlib import Path
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
+from src.pipelines.training_preflight import run_training_preflight
 from src.utils.console import announce, render_kv_table, render_records_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
@@ -61,6 +62,17 @@ def run(cfg: DictConfig) -> None:
             scheduler = instantiate(scheduler_cfg)
     callbacks = instantiate(cfg.callbacks)
     logger = instantiate(cfg.logger)
+
+    preflight_summary = run_training_preflight(
+        datamodule=datamodule,
+        model=model,
+        trainer=trainer,
+        loss_fn=loss_fn,
+        metric_fn=metric_fn,
+        optimizer=optimizer,
+    )
+    render_kv_table("QAI Training Preflight", preflight_summary)
+
     run_dir = Path.cwd()
     output_run_dir = get_hydra_output_dir()
     artifact_run_dirs = [run_dir]
@@ -118,6 +130,7 @@ def run(cfg: DictConfig) -> None:
             training_setup_payload,
             artifact_run_dir / "artifacts" / "training_setup.json",
         )
+        save_json(preflight_summary, artifact_run_dir / "artifacts" / "training_preflight.json")
         (artifact_run_dir / "artifacts" / "model_structure.txt").write_text(f"{model}\n")
 
     render_kv_table(

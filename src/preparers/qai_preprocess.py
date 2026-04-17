@@ -21,6 +21,17 @@ def _announce(message: str) -> None:
     announce(message)
 
 
+def _drop_merge_helper_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    helper_columns = [
+        column
+        for column in frame.columns
+        if column.startswith("quarter_end_date_") and column != "quarter_end_date"
+    ]
+    if not helper_columns:
+        return frame
+    return frame.drop(columns=helper_columns)
+
+
 class QaiPreprocessPreparer:
     def __init__(self) -> None:
         self.last_run_summary: dict[str, Any] | None = None
@@ -77,6 +88,7 @@ class QaiPreprocessPreparer:
             on=["ticker", "time_range"],
             suffixes=("", "_story"),
         )
+        merged = _drop_merge_helper_columns(merged)
         if not economics.empty:
             merged = merged.merge(
                 economics,
@@ -84,8 +96,7 @@ class QaiPreprocessPreparer:
                 on="time_range",
                 suffixes=("", "_economics"),
             )
-            if "quarter_end_date_economics" in merged.columns:
-                merged = merged.drop(columns=["quarter_end_date_economics"])
+            merged = _drop_merge_helper_columns(merged)
         if not technical.empty:
             merged = merged.merge(
                 technical,
@@ -93,8 +104,7 @@ class QaiPreprocessPreparer:
                 on=["ticker", "time_range"],
                 suffixes=("", "_technical"),
             )
-            if "quarter_end_date_technical" in merged.columns:
-                merged = merged.drop(columns=["quarter_end_date_technical"])
+            merged = _drop_merge_helper_columns(merged)
         merged = merged.sort_values(["ticker", "quarter_end_date"]).reset_index(drop=True)
 
         story_numeric_columns = [

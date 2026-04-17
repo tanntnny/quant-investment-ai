@@ -8,3 +8,4 @@ top_strategy_count: 5
 top_holdings_per_quarter: 10
 device: auto
 write_outputs: true
+allow_incomplete_runs: false

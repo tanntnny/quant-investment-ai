@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +61,8 @@ class LightGBMPortfolioTrainer:
         if logger is not None:
             logger.log_metrics(metrics)
 
-        _write_outputs(metrics)
+        _assert_finite_metrics(metrics)
+        _write_outputs(metrics, model=model)
         render_kv_table("LightGBM Portfolio Trainer Metrics", metrics)
         return metrics
 
@@ -93,20 +95,24 @@ def _evaluate_samples(*, samples, model, metric_fn, torch) -> dict[str, float]:
         "ticker_attention_mask": ticker_attention_mask,
     }
     if metric_fn is None:
-        return {
+        metrics = {
             "portfolio_growth": float(
                 torch.sum(weights * future_prices, dim=-1).div(
                     torch.sum(weights * current_prices, dim=-1).clamp_min(1e-8)
                 ).mean()
             )
         }
-    return {
+        _assert_finite_metrics(metrics)
+        return metrics
+    metrics = {
         key: float(value.detach().cpu().item()) if hasattr(value, "detach") else float(value)
         for key, value in metric_fn(outputs, batch).items()
     }
+    _assert_finite_metrics(metrics)
+    return metrics
 
 
-def _write_outputs(metrics: dict[str, float | int]) -> None:
+def _write_outputs(metrics: dict[str, float | int], *, model) -> None:
     root_run_dir = Path.cwd()
     output_run_dir = get_hydra_output_dir()
     run_dirs = [root_run_dir]
@@ -115,9 +121,30 @@ def _write_outputs(metrics: dict[str, float | int]) -> None:
     for run_dir in run_dirs:
         ensure_dir(run_dir / "artifacts")
         ensure_dir(run_dir / "tables")
+        if hasattr(model, "save"):
+            model.save(run_dir / "artifacts" / "model.pkl")
+        save_json(
+            {
+                "model": model.__class__.__name__,
+                "training_backend": getattr(model, "_backend", None)
+                or getattr(model, "training_backend", None),
+                "artifact": "artifacts/model.pkl",
+            },
+            run_dir / "artifacts" / "model_summary.json",
+        )
         save_json(metrics, run_dir / "metrics.json")
         save_json([metrics], run_dir / "epoch_metrics.json")
         epoch_csv = run_dir / "tables" / "epoch_metrics.csv"
         epoch_csv.write_text(
             ",".join(metrics.keys()) + "\n" + ",".join(str(value) for value in metrics.values()) + "\n"
         )
+
+
+def _assert_finite_metrics(metrics: dict[str, float | int]) -> None:
+    bad_keys = [
+        key
+        for key, value in metrics.items()
+        if isinstance(value, (int, float)) and not math.isfinite(float(value))
+    ]
+    if bad_keys:
+        raise RuntimeError(f"LightGBM trainer produced non-finite metrics: {bad_keys}")

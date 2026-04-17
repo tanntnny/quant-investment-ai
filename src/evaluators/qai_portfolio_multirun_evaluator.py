@@ -20,6 +20,7 @@ from src.datamodules.qai_datamodule import (
     _load_price_history,
     _load_split_frame,
 )
+from src.models.qai_portfolio_lightgbm import QaiPortfolioLightGBMModel
 from src.utils.console import announce, render_kv_table, render_records_table
 from src.utils.io import save_json
 from src.utils.logging import ensure_dir
@@ -40,18 +41,25 @@ class QaiPortfolioMultirunEvaluator:
         multirun_root: str = "saves/run_artifacts/train_qai_portfolio",
         evaluation_scopes: list[str] | None = None,
         checkpoint_filename: str = "artifacts/best_checkpoint.pt",
+        checkpoint_fallback_filenames: list[str] | None = None,
         top_strategy_count: int = 5,
         top_holdings_per_quarter: int = 10,
         device: str = "cpu",
         write_outputs: bool = True,
+        allow_incomplete_runs: bool = False,
     ) -> None:
         self.multirun_root = multirun_root
         self.evaluation_scopes = evaluation_scopes or ["val", "all"]
         self.checkpoint_filename = checkpoint_filename
+        self.checkpoint_fallback_filenames = checkpoint_fallback_filenames or [
+            "artifacts/best_checkpoint.pt",
+            "artifacts/last_checkpoint.pt",
+        ]
         self.top_strategy_count = top_strategy_count
         self.top_holdings_per_quarter = top_holdings_per_quarter
         self.device = device
         self.write_outputs = write_outputs
+        self.allow_incomplete_runs = allow_incomplete_runs
 
     def evaluate(self, datamodule, model, metric_fn, run_dir: Path) -> dict:
         _ = datamodule, model, metric_fn
@@ -70,6 +78,7 @@ class QaiPortfolioMultirunEvaluator:
                 "evaluation_scopes": ", ".join(self.evaluation_scopes),
                 "device": str(device),
                 "write_outputs": self.write_outputs,
+                "allow_incomplete_runs": self.allow_incomplete_runs,
             },
         )
 
@@ -88,10 +97,24 @@ class QaiPortfolioMultirunEvaluator:
         )
 
         val_results = self._summarize_scope(run_dirs, "val", device)
+        if val_results["run_summary"].empty:
+            skipped_runs = val_results.get("skipped_runs", pd.DataFrame())
+            raise FileNotFoundError(
+                "No replayable portfolio runs were found in the multirun directory."
+                + (
+                    f" Skipped runs: {skipped_runs.to_dict(orient='records')}"
+                    if not skipped_runs.empty
+                    else ""
+                )
+            )
         top_run_ids = val_results["run_summary"].head(self.top_strategy_count)["run_id"].tolist()
         render_records_table(
             "Validation Top Strategies",
             val_results["run_summary"].head(self.top_strategy_count).to_dict(orient="records"),
+        )
+        render_kv_table(
+            "Validation Indicator Feature Profile",
+            self._indicator_feature_profile(val_results["run_summary"].head(1)),
         )
 
         metrics_payload: dict[str, Any] = {
@@ -103,6 +126,7 @@ class QaiPortfolioMultirunEvaluator:
                 "target_availability": target_counts_df.to_dict(orient="records"),
                 "portfolio_sample_counts": sample_counts_df.to_dict(orient="records"),
             },
+            "skipped_runs": val_results.get("skipped_runs", pd.DataFrame()).to_dict(orient="records"),
             "scopes": {},
         }
 
@@ -159,6 +183,9 @@ class QaiPortfolioMultirunEvaluator:
                 .head(self.top_strategy_count)
                 .to_dict(orient="records"),
                 "benchmark_terminal_nav": float(nav_frames["benchmark"]["rebased_nav"].iloc[-1]),
+                "indicator_feature_profile": self._indicator_feature_profile(
+                    scope_results["run_summary"].head(1)
+                ),
                 "outputs": {
                     "multirun_root": {key: str(value) for key, value in output_paths.items()},
                     "run_dir": {key: str(value) for key, value in run_output_paths.items()},
@@ -215,6 +242,21 @@ class QaiPortfolioMultirunEvaluator:
             key=lambda item: int(item.name),
         )
 
+    def _resolve_checkpoint_path(self, run_dir: Path) -> Path:
+        candidate_paths = [run_dir / self.checkpoint_filename]
+        candidate_paths.extend(run_dir / filename for filename in self.checkpoint_fallback_filenames)
+
+        seen: list[Path] = []
+        for candidate in candidate_paths:
+            if candidate in seen:
+                continue
+            seen.append(candidate)
+            if candidate.exists():
+                return candidate
+
+        checked = ", ".join(str(path) for path in seen)
+        raise FileNotFoundError(f"Could not find a checkpoint for run {run_dir}. Checked: {checked}")
+
     def _load_yaml(self, path: Path) -> dict:
         return yaml.safe_load(path.read_text())
 
@@ -244,7 +286,46 @@ class QaiPortfolioMultirunEvaluator:
             model_cfg["input_dim"] = datamodule.feature_dim
         if model_cfg.get("sequence_length") in {None, "auto"}:
             model_cfg["sequence_length"] = datamodule.max_sequence_length
-        return instantiate(OmegaConf.create(model_cfg))
+        seed = run_cfg.get("seed", 123)
+        parent_cfg = OmegaConf.create({"seed": seed, "model": model_cfg})
+        return instantiate(parent_cfg.model)
+
+    def _resolve_model_target(self, run_cfg: dict) -> str:
+        model_cfg = run_cfg.get("model", {}) or {}
+        return str(model_cfg.get("_target_", "unknown"))
+
+    def _resolve_model_family(self, run_cfg: dict) -> str:
+        portfolio_model = run_cfg.get("portfolio_model")
+        if portfolio_model not in {None, "", "null"}:
+            return str(portfolio_model)
+        target = self._resolve_model_target(run_cfg)
+        target_name = target.rsplit(".", 1)[-1]
+        if target_name.startswith("QaiPortfolio") and target_name.endswith("Model"):
+            target_name = target_name[len("QaiPortfolio") : -len("Model")]
+        return target_name.lower()
+
+    def _feature_profile(self, datamodule) -> dict[str, int]:
+        feature_names = list(getattr(datamodule, "feature_names", []) or [])
+        economics_feature_count = sum(1 for column in feature_names if column.startswith("econ_"))
+        technical_feature_count = sum(1 for column in feature_names if column.startswith("tech_"))
+        return {
+            "feature_dim": int(getattr(datamodule, "feature_dim", len(feature_names))),
+            "economics_feature_count": economics_feature_count,
+            "technical_feature_count": technical_feature_count,
+            "indicator_feature_count": economics_feature_count + technical_feature_count,
+        }
+
+    def _indicator_feature_profile(self, run_summary_df: pd.DataFrame) -> dict[str, Any]:
+        if run_summary_df.empty:
+            return {}
+        row = run_summary_df.iloc[0]
+        return {
+            "model_family": row.get("model_family"),
+            "feature_dim": int(row.get("feature_dim", 0) or 0),
+            "economics_feature_count": int(row.get("economics_feature_count", 0) or 0),
+            "technical_feature_count": int(row.get("technical_feature_count", 0) or 0),
+            "indicator_feature_count": int(row.get("indicator_feature_count", 0) or 0),
+        }
 
     def _dataloaders_for_scope(self, datamodule, evaluation_scope: str):
         if evaluation_scope == "val":
@@ -279,7 +360,23 @@ class QaiPortfolioMultirunEvaluator:
 
         datamodule = self._build_datamodule(run_cfg)
         model = self._build_model(run_cfg, datamodule)
-        checkpoint_path = run_dir / self.checkpoint_filename
+        model_family = self._resolve_model_family(run_cfg)
+        model_target = self._resolve_model_target(run_cfg)
+        feature_profile = self._feature_profile(datamodule)
+
+        if getattr(model, "training_backend", None) == "lightgbm":
+            return self._evaluate_lightgbm_run(
+                run_dir=run_dir,
+                run_cfg=run_cfg,
+                datamodule=datamodule,
+                evaluation_scope=evaluation_scope,
+                final_metrics=final_metrics,
+                model_family=model_family,
+                model_target=model_target,
+                feature_profile=feature_profile,
+            )
+
+        checkpoint_path = self._resolve_checkpoint_path(run_dir)
         checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.to(device)
@@ -341,6 +438,9 @@ class QaiPortfolioMultirunEvaluator:
                                 "future_quarter_end_date": future_quarter_end_date,
                                 "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
                                 "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
+                                "model_family": model_family,
+                                "model_target": model_target,
+                                **feature_profile,
                                 "ticker_count": ticker_count,
                                 "portfolio_growth": portfolio_growth,
                                 "benchmark_growth": benchmark_growth,
@@ -366,6 +466,9 @@ class QaiPortfolioMultirunEvaluator:
                                     "run_id": int(run_dir.name),
                                     "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
                                     "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
+                                    "model_family": model_family,
+                                    "model_target": model_target,
+                                    **feature_profile,
                                     "sample_key": sample_key,
                                     "time_range": time_range,
                                     "quarter_end_date": quarter_end_date,
@@ -389,6 +492,9 @@ class QaiPortfolioMultirunEvaluator:
             "run_id": int(run_dir.name),
             "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
             "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
+            "model_family": model_family,
+            "model_target": model_target,
+            **feature_profile,
             "best_epoch": best_metrics.get("epoch")
             or best_checkpoint_summary.get("epoch")
             or checkpoint.get("epoch"),
@@ -400,6 +506,143 @@ class QaiPortfolioMultirunEvaluator:
         }
         return pd.DataFrame(sample_rows), pd.DataFrame(sample_summary_rows), metadata
 
+    def _evaluate_lightgbm_run(
+        self,
+        *,
+        run_dir: Path,
+        run_cfg: dict,
+        datamodule,
+        evaluation_scope: str,
+        final_metrics: dict,
+        model_family: str,
+        model_target: str,
+        feature_profile: dict[str, int],
+    ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+        artifact_path = run_dir / "artifacts" / "model.pkl"
+        if not artifact_path.exists():
+            raise FileNotFoundError(
+                f"LightGBM run {run_dir.name} is missing replayable model artifact: {artifact_path}"
+            )
+        model = QaiPortfolioLightGBMModel.load(artifact_path)
+
+        sample_rows: list[dict[str, Any]] = []
+        sample_summary_rows: list[dict[str, Any]] = []
+        for source_split, samples in self._samples_for_scope(datamodule, evaluation_scope):
+            weights_by_sample = model.predict_sample_weights(samples)
+            for sample, sample_weights in zip(samples, weights_by_sample):
+                ticker_count = int(sample["ticker_count"])
+                if ticker_count == 0:
+                    continue
+
+                valid_weights = np.asarray(sample_weights[:ticker_count], dtype=float)
+                valid_weights = valid_weights / max(valid_weights.sum(), 1e-8)
+                valid_current = sample["current_prices"][:ticker_count].detach().cpu().numpy().astype(float)
+                valid_future = sample["future_prices"][:ticker_count].detach().cpu().numpy().astype(float)
+                equal_weights = np.full(ticker_count, 1.0 / ticker_count, dtype=float)
+                tickers = list(sample["tickers"])[:ticker_count]
+                quarter_end_date = pd.Timestamp(sample["quarter_end_date"]).normalize()
+                future_quarter_end_date = pd.Timestamp(sample["future_quarter_end_date"]).normalize()
+                time_range = str(sample["time_range"])
+
+                weighted_current = float(np.sum(valid_weights * valid_current))
+                weighted_future = float(np.sum(valid_weights * valid_future))
+                benchmark_current = float(np.sum(equal_weights * valid_current))
+                benchmark_future = float(np.sum(equal_weights * valid_future))
+                portfolio_growth = weighted_future / max(weighted_current, 1e-8)
+                benchmark_growth = benchmark_future / max(benchmark_current, 1e-8)
+                growth_alpha = portfolio_growth - benchmark_growth
+                max_weight = float(valid_weights.max())
+                effective_holdings = float(1.0 / max(np.square(valid_weights).sum(), 1e-8))
+                sample_key = f"{source_split}__{time_range}__{quarter_end_date.date()}"
+
+                sample_summary_rows.append(
+                    {
+                        "evaluation_scope": evaluation_scope,
+                        "source_split": source_split,
+                        "run_id": int(run_dir.name),
+                        "sample_key": sample_key,
+                        "time_range": time_range,
+                        "quarter_end_date": quarter_end_date,
+                        "future_quarter_end_date": future_quarter_end_date,
+                        "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
+                        "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
+                        "model_family": model_family,
+                        "model_target": model_target,
+                        **feature_profile,
+                        "ticker_count": ticker_count,
+                        "portfolio_growth": portfolio_growth,
+                        "benchmark_growth": benchmark_growth,
+                        "growth_alpha": growth_alpha,
+                        "max_weight": max_weight,
+                        "effective_holdings": effective_holdings,
+                    }
+                )
+
+                ticker_returns = valid_future / np.maximum(valid_current, 1e-8) - 1.0
+                for ticker, weight, equal_weight, current_price, future_price, ticker_return in zip(
+                    tickers,
+                    valid_weights,
+                    equal_weights,
+                    valid_current,
+                    valid_future,
+                    ticker_returns,
+                ):
+                    sample_rows.append(
+                        {
+                            "evaluation_scope": evaluation_scope,
+                            "source_split": source_split,
+                            "run_id": int(run_dir.name),
+                            "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
+                            "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
+                            "model_family": model_family,
+                            "model_target": model_target,
+                            **feature_profile,
+                            "sample_key": sample_key,
+                            "time_range": time_range,
+                            "quarter_end_date": quarter_end_date,
+                            "future_quarter_end_date": future_quarter_end_date,
+                            "ticker": str(ticker),
+                            "weight": float(weight),
+                            "equal_weight": float(equal_weight),
+                            "current_price": float(current_price),
+                            "future_price": float(future_price),
+                            "ticker_return": float(ticker_return),
+                            "portfolio_growth": portfolio_growth,
+                            "benchmark_growth": benchmark_growth,
+                            "growth_alpha": growth_alpha,
+                            "max_weight": max_weight,
+                            "effective_holdings": effective_holdings,
+                        }
+                    )
+
+        metadata = {
+            "evaluation_scope": evaluation_scope,
+            "run_id": int(run_dir.name),
+            "risk_penalty": float(run_cfg["loss"]["risk_penalty"]),
+            "concentration_penalty": float(run_cfg["loss"]["concentration_penalty"]),
+            "model_family": model_family,
+            "model_target": model_target,
+            **feature_profile,
+            "best_epoch": final_metrics.get("epoch"),
+            "final_epoch": final_metrics.get("epoch"),
+            "saved_best_val_growth_alpha": final_metrics.get("val_growth_alpha"),
+            "saved_best_val_effective_holdings": final_metrics.get("val_effective_holdings"),
+            "saved_final_val_growth_alpha": final_metrics.get("val_growth_alpha"),
+            "saved_final_val_effective_holdings": final_metrics.get("val_effective_holdings"),
+        }
+        return pd.DataFrame(sample_rows), pd.DataFrame(sample_summary_rows), metadata
+
+    def _samples_for_scope(self, datamodule, evaluation_scope: str) -> list[tuple[str, list[dict[str, Any]]]]:
+        if evaluation_scope == "val":
+            return [("val", list(datamodule.samples_by_split.get("val", [])))]
+        if evaluation_scope == "all":
+            return [
+                ("train", list(datamodule.samples_by_split.get("train", []))),
+                ("val", list(datamodule.samples_by_split.get("val", []))),
+                ("test", list(datamodule.samples_by_split.get("test", []))),
+            ]
+        raise ValueError(f"Unsupported evaluation_scope: {evaluation_scope}")
+
     def _summarize_scope(
         self,
         run_dirs: list[Path],
@@ -409,9 +652,26 @@ class QaiPortfolioMultirunEvaluator:
         all_sample_frames = []
         all_sample_summary_frames = []
         run_summary_rows = []
+        skipped_runs: list[dict[str, Any]] = []
 
         for run_dir in run_dirs:
-            sample_df, sample_summary_df, metadata = self._evaluate_run(run_dir, evaluation_scope, device)
+            try:
+                sample_df, sample_summary_df, metadata = self._evaluate_run(
+                    run_dir, evaluation_scope, device
+                )
+            except (FileNotFoundError, RuntimeError) as exc:
+                if not self.allow_incomplete_runs:
+                    raise RuntimeError(
+                        f"Run {run_dir.name} cannot be evaluated for scope {evaluation_scope}: {exc}"
+                    ) from exc
+                skipped_runs.append(
+                    {
+                        "run_id": int(run_dir.name) if run_dir.name.isdigit() else run_dir.name,
+                        "evaluation_scope": evaluation_scope,
+                        "reason": str(exc),
+                    }
+                )
+                continue
             all_sample_frames.append(sample_df)
             all_sample_summary_frames.append(sample_summary_df)
 
@@ -432,7 +692,7 @@ class QaiPortfolioMultirunEvaluator:
                 {
                     **metadata,
                     "strategy_label": (
-                        f"run {metadata['run_id']} | "
+                        f"run {metadata['run_id']} | model={metadata['model_family']} | "
                         f"risk={metadata['risk_penalty']} | "
                         f"conc={metadata['concentration_penalty']}"
                     ),
@@ -449,16 +709,28 @@ class QaiPortfolioMultirunEvaluator:
                 }
             )
 
+        weights_df = pd.concat(all_sample_frames, ignore_index=True) if all_sample_frames else pd.DataFrame()
+        sample_summary_df = (
+            pd.concat(all_sample_summary_frames, ignore_index=True)
+            if all_sample_summary_frames
+            else pd.DataFrame()
+        )
+        run_summary_df = pd.DataFrame(run_summary_rows)
+        if not run_summary_df.empty:
+            run_summary_df = run_summary_df.sort_values("growth_alpha_mean", ascending=False).reset_index(
+                drop=True
+            )
         return {
-            "weights": pd.concat(all_sample_frames, ignore_index=True)
-            .sort_values(["run_id", "quarter_end_date", "source_split", "ticker"])
-            .reset_index(drop=True),
-            "sample_summary": pd.concat(all_sample_summary_frames, ignore_index=True)
-            .sort_values(["run_id", "quarter_end_date", "source_split"])
-            .reset_index(drop=True),
-            "run_summary": pd.DataFrame(run_summary_rows)
-            .sort_values("growth_alpha_mean", ascending=False)
-            .reset_index(drop=True),
+            "weights": weights_df.sort_values(["run_id", "quarter_end_date", "source_split", "ticker"]).reset_index(drop=True)
+            if not weights_df.empty
+            else weights_df,
+            "sample_summary": sample_summary_df.sort_values(["run_id", "quarter_end_date", "source_split"]).reset_index(
+                drop=True
+            )
+            if not sample_summary_df.empty
+            else sample_summary_df,
+            "run_summary": run_summary_df,
+            "skipped_runs": pd.DataFrame(skipped_runs),
         }
 
     def _build_validation_diagnostics(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -656,50 +928,72 @@ class QaiPortfolioMultirunEvaluator:
         return pd.DataFrame(rows)
 
     def _plot_validation_heatmaps(self, run_summary_df: pd.DataFrame, output_path: Path) -> None:
-        alpha_heatmap = (
-            run_summary_df.pivot(
-                index="risk_penalty",
-                columns="concentration_penalty",
-                values="growth_alpha_mean",
-            )
-            .sort_index()
-            .sort_index(axis=1)
-        )
-        holdings_heatmap = (
-            run_summary_df.pivot(
-                index="risk_penalty",
-                columns="concentration_penalty",
-                values="effective_holdings_mean",
-            )
-            .sort_index()
-            .sort_index(axis=1)
-        )
+        if run_summary_df.empty:
+            return
 
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-        for ax, matrix, title in [
-            (axes[0], alpha_heatmap, "Validation Growth Alpha"),
-            (axes[1], holdings_heatmap, "Validation Effective Holdings"),
-        ]:
-            image = ax.imshow(matrix.values, aspect="auto", cmap="viridis")
-            ax.set_title(title)
-            ax.set_xlabel("concentration_penalty")
-            ax.set_ylabel("risk_penalty")
-            ax.set_xticks(range(len(matrix.columns)))
-            ax.set_xticklabels([str(column) for column in matrix.columns])
-            ax.set_yticks(range(len(matrix.index)))
-            ax.set_yticklabels([str(index) for index in matrix.index])
-            for row_idx in range(matrix.shape[0]):
-                for col_idx in range(matrix.shape[1]):
-                    ax.text(
-                        col_idx,
-                        row_idx,
-                        f"{matrix.iloc[row_idx, col_idx]:.3f}",
-                        ha="center",
-                        va="center",
-                        color="white",
-                        fontsize=9,
-                    )
-            fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+        grouped_frames = []
+        if "model_family" in run_summary_df.columns:
+            for model_family, family_df in run_summary_df.groupby("model_family", dropna=False):
+                grouped_frames.append((str(model_family), family_df))
+        else:
+            grouped_frames.append(("all_models", run_summary_df))
+
+        fig, axes = plt.subplots(len(grouped_frames), 2, figsize=(16, 6 * len(grouped_frames)))
+        if len(grouped_frames) == 1:
+            axes = np.array([axes])
+
+        for row_idx, (model_family, family_df) in enumerate(grouped_frames):
+            alpha_heatmap = (
+                family_df.pivot_table(
+                    index="risk_penalty",
+                    columns="concentration_penalty",
+                    values="growth_alpha_mean",
+                    aggfunc="mean",
+                )
+                .sort_index()
+                .sort_index(axis=1)
+            )
+            holdings_heatmap = (
+                family_df.pivot_table(
+                    index="risk_penalty",
+                    columns="concentration_penalty",
+                    values="effective_holdings_mean",
+                    aggfunc="mean",
+                )
+                .sort_index()
+                .sort_index(axis=1)
+            )
+
+            for col_idx, (matrix, title) in enumerate(
+                [
+                    (alpha_heatmap, f"Validation Growth Alpha ({model_family})"),
+                    (holdings_heatmap, f"Validation Effective Holdings ({model_family})"),
+                ]
+            ):
+                ax = axes[row_idx, col_idx]
+                if matrix.empty:
+                    ax.set_axis_off()
+                    continue
+                image = ax.imshow(matrix.values, aspect="auto", cmap="viridis")
+                ax.set_title(title)
+                ax.set_xlabel("concentration_penalty")
+                ax.set_ylabel("risk_penalty")
+                ax.set_xticks(range(len(matrix.columns)))
+                ax.set_xticklabels([str(column) for column in matrix.columns])
+                ax.set_yticks(range(len(matrix.index)))
+                ax.set_yticklabels([str(index) for index in matrix.index])
+                for heat_row_idx in range(matrix.shape[0]):
+                    for heat_col_idx in range(matrix.shape[1]):
+                        ax.text(
+                            heat_col_idx,
+                            heat_row_idx,
+                            f"{matrix.iloc[heat_row_idx, heat_col_idx]:.3f}",
+                            ha="center",
+                            va="center",
+                            color="white",
+                            fontsize=9,
+                        )
+                fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
         plt.tight_layout()
         if self.write_outputs:
             fig.savefig(output_path, dpi=150, bbox_inches="tight")

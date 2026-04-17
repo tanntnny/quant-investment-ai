@@ -69,6 +69,23 @@ def test_qai_portfolio_model_pair_configs_resolve() -> None:
     )
 
 
+def test_qai_portfolio_multirun_eval_resolves_portfolio_flow() -> None:
+    config_dir = str((Path(__file__).resolve().parents[1] / "configs").resolve())
+    with initialize_config_dir(version_base=None, config_dir=config_dir):
+        cfg = compose(config_name="config", overrides=["experiment=qai_portfolio_multirun_eval"])
+
+    assert cfg.mode.name == "eval"
+    assert (
+        cfg.data._target_ == "src.datamodules.qai_portfolio_datamodule.QaiPortfolioDataModule"
+    )
+    assert cfg.model._target_ == "src.models.example.ExampleModel"
+    assert cfg.metrics._target_ == "src.metrics.qai_portfolio.QaiPortfolioMetrics"
+    assert (
+        cfg.evaluator._target_
+        == "src.evaluators.qai_portfolio_multirun_evaluator.QaiPortfolioMultirunEvaluator"
+    )
+
+
 def test_lightgbm_model_forces_lightgbm_trainer() -> None:
     trainer_cfg = {"_target_": "src.trainers.pytorch_trainer.PytorchTrainer"}
     resolved = _resolve_trainer_cfg(

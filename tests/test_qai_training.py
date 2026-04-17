@@ -15,6 +15,7 @@ from src.metrics.qai_portfolio import QaiPortfolioMetrics
 from src.models.qai_attention import QaiAttentionModel
 from src.models import qai_portfolio_lightgbm as qai_portfolio_lightgbm_module
 from src.models.qai_portfolio_lightgbm import QaiPortfolioLightGBMModel
+from src.pipelines.training_preflight import TrainingPreflightError, run_training_preflight
 from src.trainers.lightgbm_portfolio_trainer import LightGBMPortfolioTrainer
 from src.trainers.pytorch_trainer import PytorchTrainer
 from tests.qai_fixtures import build_qai_fixture
@@ -37,7 +38,8 @@ def test_qai_multitask_loss_smoke() -> None:
     assert float(losses["loss"]) > 0.0
 
 
-def test_pytorch_trainer_qai_smoke(tmp_path: Path) -> None:
+def test_pytorch_trainer_qai_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
     paths = build_qai_fixture(tmp_path)
     datamodule = QaiDataModule(
         train_path=str(paths["train"]),
@@ -73,8 +75,9 @@ def test_pytorch_trainer_qai_smoke(tmp_path: Path) -> None:
     assert "val_loss" in metrics
 
 
-def test_lightgbm_portfolio_trainer_smoke(tmp_path: Path) -> None:
+def test_lightgbm_portfolio_trainer_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("lightgbm")
+    monkeypatch.chdir(tmp_path)
     paths = build_qai_fixture(tmp_path)
     datamodule = QaiPortfolioDataModule(
         train_path=str(paths["train"]),
@@ -102,11 +105,13 @@ def test_lightgbm_portfolio_trainer_smoke(tmp_path: Path) -> None:
 
     assert metrics["epoch"] == 1
     assert "train_portfolio_growth" in metrics
+    assert (tmp_path / "artifacts" / "model.pkl").exists()
 
 
 def test_lightgbm_portfolio_trainer_falls_back_without_lightgbm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     paths = build_qai_fixture(tmp_path)
     datamodule = QaiPortfolioDataModule(
         train_path=str(paths["train"]),
@@ -149,9 +154,62 @@ def test_lightgbm_portfolio_trainer_falls_back_without_lightgbm(
     assert model._backend == "sklearn"
     assert metrics["epoch"] == 1
     assert "train_portfolio_growth" in metrics
+    assert (tmp_path / "artifacts" / "model.pkl").exists()
 
 
 def test_lightgbm_portfolio_model_accepts_input_dim() -> None:
     model = QaiPortfolioLightGBMModel(input_dim=8, n_estimators=2, min_child_samples=1)
 
     assert model.input_dim == 8
+
+
+def test_training_preflight_rejects_reserved_feature_column(tmp_path: Path) -> None:
+    paths = build_qai_fixture(tmp_path)
+    datamodule = QaiPortfolioDataModule(
+        train_path=str(paths["train"]),
+        val_path=str(paths["val"]),
+        test_path=str(paths["test"]),
+        price_history_path=str(paths["prices"]),
+        sequence_length=4,
+        batch_size=2,
+        target_horizon=1,
+        horizons=[1],
+    )
+    datamodule.setup()
+    datamodule.feature_names.append("quarter_end_date_story")
+
+    with pytest.raises(TrainingPreflightError, match="helper columns"):
+        run_training_preflight(
+            datamodule=datamodule,
+            model=QaiPortfolioLightGBMModel(n_estimators=2, min_child_samples=1),
+            trainer=LightGBMPortfolioTrainer(),
+            loss_fn=None,
+            metric_fn=QaiPortfolioMetrics(),
+            optimizer=None,
+        )
+
+
+def test_training_preflight_rejects_nan_features(tmp_path: Path) -> None:
+    paths = build_qai_fixture(tmp_path)
+    datamodule = QaiPortfolioDataModule(
+        train_path=str(paths["train"]),
+        val_path=str(paths["val"]),
+        test_path=str(paths["test"]),
+        price_history_path=str(paths["prices"]),
+        sequence_length=4,
+        batch_size=2,
+        target_horizon=1,
+        horizons=[1],
+    )
+    datamodule.setup()
+    datamodule.samples_by_split["train"][0]["features"][0, 0, 0] = float("nan")
+
+    with pytest.raises(TrainingPreflightError, match="NaN or infinite"):
+        run_training_preflight(
+            datamodule=datamodule,
+            model=QaiPortfolioLightGBMModel(n_estimators=2, min_child_samples=1),
+            trainer=LightGBMPortfolioTrainer(),
+            loss_fn=None,
+            metric_fn=QaiPortfolioMetrics(),
+            optimizer=None,
+        )
