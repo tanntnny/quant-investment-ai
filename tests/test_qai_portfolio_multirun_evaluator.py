@@ -139,7 +139,7 @@ def test_portfolio_multirun_evaluator_reports_indicator_profile(tmp_path: Path, 
     monkeypatch.setattr(
         QaiPortfolioMultirunEvaluator,
         "_build_validation_diagnostics",
-        lambda self: (
+        lambda self, run_cfg=None: (
             pd.DataFrame([{"time_range": "q1y2020", "quarter_end_date": "2020-03-31", "ticker_count": 1}]),
             pd.DataFrame(
                 [
@@ -244,7 +244,7 @@ def test_portfolio_multirun_evaluator_uses_last_checkpoint_fallback(tmp_path: Pa
     monkeypatch.setattr(
         QaiPortfolioMultirunEvaluator,
         "_build_validation_diagnostics",
-        lambda self: (
+        lambda self, run_cfg=None: (
             pd.DataFrame([{"time_range": "q1y2020", "quarter_end_date": "2020-03-31", "ticker_count": 1}]),
             pd.DataFrame(
                 [

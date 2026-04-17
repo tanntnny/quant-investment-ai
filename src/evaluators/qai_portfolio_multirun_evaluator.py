@@ -16,6 +16,7 @@ from omegaconf import OmegaConf
 
 from src.datamodules.qai_datamodule import (
     _align_quarter_close_prices,
+    _align_target_prices,
     _attach_future_targets,
     _load_price_history,
     _load_split_frame,
@@ -64,6 +65,7 @@ class QaiPortfolioMultirunEvaluator:
         _ = datamodule, model, metric_fn
         multirun_root = self._resolve_multirun_root(self.multirun_root)
         run_dirs = self._discover_run_dirs(multirun_root)
+        diagnostic_run_cfg = self._load_yaml(run_dirs[0] / "config_resolved.yaml") if run_dirs else None
         device = self._resolve_device(self.device)
         eval_output_dir = run_dir / "eval_outputs"
         if self.write_outputs:
@@ -81,7 +83,9 @@ class QaiPortfolioMultirunEvaluator:
             },
         )
 
-        raw_counts_df, target_counts_df, sample_counts_df = self._build_validation_diagnostics()
+        raw_counts_df, target_counts_df, sample_counts_df = self._build_validation_diagnostics(
+            diagnostic_run_cfg
+        )
         render_records_table(
             "Validation Raw Counts",
             raw_counts_df.to_dict(orient="records"),
@@ -583,9 +587,25 @@ class QaiPortfolioMultirunEvaluator:
             "skipped_runs": pd.DataFrame(skipped_runs),
         }
 
-    def _build_validation_diagnostics(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    def _build_validation_diagnostics(
+        self,
+        run_cfg: dict | None = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         repo_root = self._repo_root()
-        val_df = pd.read_csv(repo_root / "data/preprocessed/val.csv")
+        data_cfg = dict((run_cfg or {}).get("data", {}) or {})
+        val_path = Path(self._resolve_repo_path(data_cfg.get("val_path", "data/preprocessed/val.csv")))
+        train_path = Path(self._resolve_repo_path(data_cfg.get("train_path", "data/preprocessed/train.csv")))
+        test_path = Path(self._resolve_repo_path(data_cfg.get("test_path", "data/preprocessed/test.csv")))
+        price_history_path = Path(
+            self._resolve_repo_path(data_cfg.get("price_history_path", "data/raw/us-shareprices-daily.csv"))
+        )
+        target_frequency = str(data_cfg.get("target_frequency", "quarterly"))
+        price_field = str(data_cfg.get("price_field", "Adj. Close"))
+        horizons = [int(value) for value in data_cfg.get("horizons", [1])]
+        target_horizon = int(data_cfg.get("target_horizon") or max(horizons))
+        flat_return_threshold = float(data_cfg.get("flat_return_threshold", 0.02))
+
+        val_df = pd.read_csv(val_path)
         val_df["quarter_end_date"] = pd.to_datetime(val_df["quarter_end_date"])
         raw_counts_df = (
             val_df.groupby(["time_range", "quarter_end_date"], as_index=False)
@@ -593,24 +613,42 @@ class QaiPortfolioMultirunEvaluator:
             .sort_values("quarter_end_date")
         )
 
-        val_split = _load_split_frame(repo_root / "data/preprocessed/val.csv", "val")
-        price_history = _load_price_history(
-            repo_root / "data/raw/us-shareprices-daily.csv",
-            price_field="Adj. Close",
+        val_split = _load_split_frame(
+            val_path,
+            "val",
+            target_frequency=target_frequency,
         )
-        quarter_prices = _align_quarter_close_prices(price_history, price_field="Adj. Close")
+        price_history = _load_price_history(
+            price_history_path,
+            price_field=price_field,
+        )
+        quarter_prices = _align_quarter_close_prices(
+            price_history,
+            price_field=price_field,
+        ) if target_frequency == "quarterly" else _align_target_prices(
+            price_history,
+            price_field=price_field,
+            target_frequency=target_frequency,
+        )
         targets = _attach_future_targets(
             quarter_prices,
-            horizons=[1],
-            flat_return_threshold=0.02,
+            horizons=horizons,
+            flat_return_threshold=flat_return_threshold,
+            target_frequency=target_frequency,
         )
         merged = val_split.merge(targets, how="left", on=["ticker", "quarter_end_date", "time_range"])
+        future_price_column = f"future_price_t{target_horizon}"
         target_counts_df = (
             merged.groupby(["time_range", "quarter_end_date"], as_index=False)
             .agg(
                 tickers=("ticker", "size"),
                 quarter_price_nonnull=("quarter_price", lambda s: int(s.notna().sum())),
-                future_price_t1_nonnull=("future_price_t1", lambda s: int(s.notna().sum())),
+                **{
+                    f"{future_price_column}_nonnull": (
+                        future_price_column,
+                        lambda s: int(s.notna().sum()),
+                    )
+                },
             )
             .sort_values("quarter_end_date")
         )
@@ -619,24 +657,28 @@ class QaiPortfolioMultirunEvaluator:
             OmegaConf.create(
                 {
                     "_target_": "src.datamodules.qai_portfolio_datamodule.QaiPortfolioDataModule",
-                    "train_path": str(repo_root / "data/preprocessed/train.csv"),
-                    "val_path": str(repo_root / "data/preprocessed/val.csv"),
-                    "test_path": str(repo_root / "data/preprocessed/test.csv"),
-                    "price_history_path": str(repo_root / "data/raw/us-shareprices-daily.csv"),
-                    "sequence_length": 4,
-                    "feature_columns": None,
-                    "exclude_columns": [
-                        "split",
-                        "window_ready",
-                        "horizon_target_ready",
-                        "ticker_history_index",
-                    ],
-                    "horizons": [1],
-                    "target_horizon": 1,
-                    "price_field": "Adj. Close",
-                    "flat_return_threshold": 0.02,
-                    "batch_size": 8,
-                    "num_workers": 0,
+                    "train_path": str(train_path),
+                    "val_path": str(val_path),
+                    "test_path": str(test_path),
+                    "price_history_path": str(price_history_path),
+                    "sequence_length": int(data_cfg.get("sequence_length", 4)),
+                    "feature_columns": data_cfg.get("feature_columns"),
+                    "exclude_columns": data_cfg.get(
+                        "exclude_columns",
+                        [
+                            "split",
+                            "window_ready",
+                            "horizon_target_ready",
+                            "ticker_history_index",
+                        ],
+                    ),
+                    "horizons": horizons,
+                    "target_horizon": target_horizon,
+                    "target_frequency": target_frequency,
+                    "price_field": price_field,
+                    "flat_return_threshold": flat_return_threshold,
+                    "batch_size": int(data_cfg.get("batch_size", 8)),
+                    "num_workers": int(data_cfg.get("num_workers", 0)),
                 }
             )
         )
