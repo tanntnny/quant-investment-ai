@@ -3,7 +3,7 @@ train_path: data/preprocessed/train.csv
 val_path: data/preprocessed/val.csv
 test_path: data/preprocessed/test.csv
 price_history_path: data/raw/us-shareprices-daily.csv
-sequence_length: 4
+sequence_length: 16
 feature_columns: null
 exclude_columns:
   - split

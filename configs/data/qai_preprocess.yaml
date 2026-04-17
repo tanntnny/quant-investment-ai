@@ -13,7 +13,7 @@ outputs:
 
 ticker_column: "ticker"
 date_column: "date"
-sequence_length: 4
+sequence_length: 16
 resample_frequency: "daily"
 time_horizon: 180
 time_horizontal: null

@@ -9,20 +9,35 @@ defaults:
   - override /optimizer: adamw
   - override /trainer: pytorch
 
-name: qai_portfolio_train
+name: qai_portfolio_overfit
+
+data:
+  batch_size: 1
+
+model:
+  dropout: 0.0
 
 trainer:
-  max_epochs: 30
+  max_epochs: 1
+  max_steps: -1
   accelerator: auto
+
+optimizer:
+  lr: 0.003
+  weight_decay: 0.0
 
 loss:
   risk_penalty: 0.0
   concentration_penalty: 0.0
 
+overfit:
+  steps: 200
+  batch_index: 0
+  log_every_n_steps: 10
+  min_loss_reduction: 0.000001
+  fail_on_no_improvement: true
+
 hydra:
-  mode: MULTIRUN
-  sweeper:
-    params:
-      portfolio_model: attention,bilstm
-      loss.risk_penalty: 0.0, 0.0001, 0.01
-      loss.concentration_penalty: 0.0, 0.0001, 0.01
+  mode: RUN
+  run:
+    dir: outputs/qai_portfolio_overfit/${now:%Y-%m-%d_%H-%M-%S}

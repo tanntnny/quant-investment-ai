@@ -66,13 +66,13 @@ def test_qai_portfolio_model_pair_configs_resolve() -> None:
         == "src.models.qai_portfolio_attention.QaiPortfolioAttentionModel"
     )
     assert attention_cfg.data.target_frequency == "daily"
-    assert attention_cfg.model.hidden_dim == 192
-    assert attention_cfg.model.num_heads == 8
-    assert attention_cfg.model.num_layers == 3
+    assert attention_cfg.model.hidden_dim == 76
+    assert attention_cfg.model.num_heads == 4
+    assert attention_cfg.model.num_layers == 1
     assert attention_cfg.trainer._target_ == "src.trainers.pytorch_trainer.PytorchTrainer"
     assert bilstm_cfg.model._target_ == "src.models.qai_portfolio_bilstm.QaiPortfolioBiLSTMModel"
     assert bilstm_cfg.data.target_frequency == "daily"
-    assert bilstm_cfg.model.hidden_dim == 128
+    assert bilstm_cfg.model.hidden_dim == 36
     assert bilstm_cfg.model.num_layers == 3
     assert bilstm_cfg.trainer._target_ == "src.trainers.pytorch_trainer.PytorchTrainer"
 
@@ -92,3 +92,26 @@ def test_qai_portfolio_multirun_eval_resolves_portfolio_flow() -> None:
         cfg.evaluator._target_
         == "src.evaluators.qai_portfolio_multirun_evaluator.QaiPortfolioMultirunEvaluator"
     )
+
+
+def test_qai_portfolio_overfit_experiment_resolves_portfolio_flow() -> None:
+    config_dir = str((Path(__file__).resolve().parents[1] / "configs").resolve())
+    with initialize_config_dir(version_base=None, config_dir=config_dir):
+        cfg = compose(config_name="config", overrides=["experiment=qai_portfolio_overfit"])
+
+    assert cfg.mode.name == "train"
+    assert (
+        cfg.data._target_ == "src.datamodules.qai_portfolio_datamodule.QaiPortfolioDataModule"
+    )
+    assert cfg.data.batch_size == 1
+    assert (
+        cfg.model._target_
+        == "src.models.qai_portfolio_attention.QaiPortfolioAttentionModel"
+    )
+    assert cfg.model.dropout == 0.0
+    assert cfg.loss.risk_penalty == 0.0
+    assert cfg.loss.concentration_penalty == 0.0
+    assert cfg.optimizer.weight_decay == 0.0
+    assert cfg.overfit.steps == 200
+    assert cfg.overfit.batch_index == 0
+    assert cfg.overfit.fail_on_no_improvement is True
