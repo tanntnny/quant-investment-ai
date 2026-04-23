@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#SBATCH --job-name=eval-qai-portfolio
+#SBATCH --job-name=eval-qai-portfolio-ensemble
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -32,7 +32,7 @@ source "$REPO_ROOT/scripts/slurm/common.sh"
 : "${HYDRA_OVERRIDES:=}"
 : "${EVAL_OUTPUT_DIR:=multirun/2026-04-17/17-44-01}"
 : "${MULTIRUN_ROOT:=$EVAL_OUTPUT_DIR}"
-: "${RUN_ARTIFACTS_DIR:=saves/run_artifacts/qai_portfolio_multirun_eval}"
+: "${RUN_ARTIFACTS_DIR:=saves/run_artifacts/qai_portfolio_best_family_ensemble_eval}"
 export EXPERIMENT_NAME REPO_ROOT EVAL_OUTPUT_DIR MULTIRUN_ROOT
 
 log_eval_start() {
@@ -44,11 +44,11 @@ from rich.console import Console
 from rich.table import Table
 
 console = Console()
-table = Table(title="QAI Portfolio Multirun Eval Start", header_style="bold magenta")
+table = Table(title="QAI Portfolio Best-Family Ensemble Eval Start", header_style="bold magenta")
 table.add_column("Field", style="bold cyan", no_wrap=True)
 table.add_column("Value", style="white")
 table.add_row("Timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-table.add_row("Job Name", os.environ.get("SLURM_JOB_NAME", "eval-qai-portfolio"))
+table.add_row("Job Name", os.environ.get("SLURM_JOB_NAME", "eval-qai-portfolio-ensemble"))
 table.add_row("Job ID", os.environ.get("SLURM_JOB_ID", "local"))
 table.add_row("Node List", os.environ.get("SLURM_JOB_NODELIST", "local"))
 table.add_row("Experiment", os.environ["EXPERIMENT_NAME"])
@@ -59,7 +59,10 @@ table.add_row(
     "Command",
     "python -m src.main "
     f"experiment={os.environ['EXPERIMENT_NAME']} "
-    f"evaluator.multirun_root={os.environ['MULTIRUN_ROOT']}",
+    f"evaluator.multirun_root={os.environ['MULTIRUN_ROOT']} "
+    "evaluator.build_best_family_ensemble=true "
+    "evaluator.ensemble_model_families=[attention,bilstm] "
+    "evaluator.ensemble_weighting=equal",
 )
 console.print(table)
 PY
@@ -77,6 +80,9 @@ cmd=(
   python -m src.main
   "experiment=${EXPERIMENT_NAME}"
   "evaluator.multirun_root=${MULTIRUN_ROOT}"
+  "evaluator.build_best_family_ensemble=true"
+  "evaluator.ensemble_model_families=[attention,bilstm]"
+  "evaluator.ensemble_weighting=equal"
 )
 
 if (( ${#extra_args[@]} > 0 )); then

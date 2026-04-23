@@ -1,0 +1,10 @@
+workflows:
+  - name: qai_portfolio_saved_eval_ensemble
+    purpose: rebuild a self-contained portfolio evaluation from archived `portfolio_eval_*` CSV outputs when the original multirun checkpoints are unavailable
+    command: python scripts/build_qai_portfolio_saved_eval_ensemble.py --source <archived_eval_root_or_eval_outputs> --output <result_dir>
+    behavior:
+      - selects the top validation `attention` run and top validation `bilstm` run from `portfolio_eval_run_summary_val.csv`
+      - averages their per-sample ticker weights 50/50 from `portfolio_eval_sample_weights_{val,all}.csv`
+      - writes a new `metrics_eval.json` plus `eval_outputs/portfolio_eval_*` files for the ensemble-only result set
+      - ensemble growth charts include benchmark, selected best `attention`, selected best `bilstm`, and final 50/50 ensemble curves
+    default_output_name: ensemble_model_result

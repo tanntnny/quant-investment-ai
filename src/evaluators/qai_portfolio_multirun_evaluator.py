@@ -37,6 +37,50 @@ except ImportError as exc:  # pragma: no cover
 
 
 class QaiPortfolioMultirunEvaluator:
+    WEIGHTS_COLUMNS = [
+        "evaluation_scope",
+        "source_split",
+        "run_id",
+        "risk_penalty",
+        "concentration_penalty",
+        "model_family",
+        "model_target",
+        "sample_key",
+        "time_range",
+        "quarter_end_date",
+        "future_quarter_end_date",
+        "ticker",
+        "weight",
+        "equal_weight",
+        "current_price",
+        "future_price",
+        "ticker_return",
+        "portfolio_growth",
+        "benchmark_growth",
+        "growth_alpha",
+        "max_weight",
+        "effective_holdings",
+    ]
+    SAMPLE_SUMMARY_COLUMNS = [
+        "evaluation_scope",
+        "source_split",
+        "run_id",
+        "sample_key",
+        "time_range",
+        "quarter_end_date",
+        "future_quarter_end_date",
+        "risk_penalty",
+        "concentration_penalty",
+        "model_family",
+        "model_target",
+        "ticker_count",
+        "portfolio_growth",
+        "benchmark_growth",
+        "growth_alpha",
+        "max_weight",
+        "effective_holdings",
+    ]
+
     def __init__(
         self,
         multirun_root: str = "saves/run_artifacts/train_qai_portfolio",
@@ -48,6 +92,9 @@ class QaiPortfolioMultirunEvaluator:
         device: str = "cpu",
         write_outputs: bool = True,
         allow_incomplete_runs: bool = False,
+        build_best_family_ensemble: bool = True,
+        ensemble_model_families: list[str] | None = None,
+        ensemble_weighting: str = "equal",
     ) -> None:
         self.multirun_root = multirun_root
         self.evaluation_scopes = evaluation_scopes or ["val", "all"]
@@ -61,12 +108,20 @@ class QaiPortfolioMultirunEvaluator:
         self.device = device
         self.write_outputs = write_outputs
         self.allow_incomplete_runs = allow_incomplete_runs
+        self.build_best_family_ensemble = build_best_family_ensemble
+        self.ensemble_model_families = ensemble_model_families or ["attention", "bilstm"]
+        self.ensemble_weighting = ensemble_weighting
 
     def evaluate(self, datamodule, model, metric_fn, run_dir: Path) -> dict:
-        _ = datamodule, model, metric_fn
+        _ = model, metric_fn
+        self._runtime_data_overrides = self._data_overrides_from_datamodule(datamodule)
         multirun_root = self._resolve_multirun_root(self.multirun_root)
         run_dirs = self._discover_run_dirs(multirun_root)
-        diagnostic_run_cfg = self._load_yaml(run_dirs[0] / "config_resolved.yaml") if run_dirs else None
+        diagnostic_run_cfg = (
+            self._with_runtime_data_overrides(self._load_yaml(run_dirs[0] / "config_resolved.yaml"))
+            if run_dirs
+            else None
+        )
         device = self._resolve_device(self.device)
         eval_output_dir = run_dir / "eval_outputs"
         if self.write_outputs:
@@ -81,6 +136,9 @@ class QaiPortfolioMultirunEvaluator:
                 "device": str(device),
                 "write_outputs": self.write_outputs,
                 "allow_incomplete_runs": self.allow_incomplete_runs,
+                "build_best_family_ensemble": self.build_best_family_ensemble,
+                "ensemble_model_families": ", ".join(self.ensemble_model_families),
+                "ensemble_weighting": self.ensemble_weighting,
             },
         )
 
@@ -112,10 +170,23 @@ class QaiPortfolioMultirunEvaluator:
                 )
             )
         top_run_ids = val_results["run_summary"].head(self.top_strategy_count)["run_id"].tolist()
+        best_family_ensemble = (
+            self._build_best_family_ensemble(
+                scope_results=val_results,
+                selection_run_summary_df=val_results["run_summary"],
+            )
+            if self.build_best_family_ensemble
+            else None
+        )
         render_records_table(
             "Validation Top Strategies",
             val_results["run_summary"].head(self.top_strategy_count).to_dict(orient="records"),
         )
+        if best_family_ensemble is not None:
+            render_records_table(
+                "Validation Best-Family Ensemble",
+                [best_family_ensemble["summary"]],
+            )
         render_kv_table(
             "Validation Indicator Feature Profile",
             self._indicator_feature_profile(val_results["run_summary"].head(1)),
@@ -130,6 +201,11 @@ class QaiPortfolioMultirunEvaluator:
                 "target_availability": target_counts_df.to_dict(orient="records"),
                 "portfolio_sample_counts": sample_counts_df.to_dict(orient="records"),
             },
+            "best_family_ensemble": {
+                "enabled": self.build_best_family_ensemble,
+                "model_families": list(self.ensemble_model_families),
+                "weighting": self.ensemble_weighting,
+            },
             "skipped_runs": val_results.get("skipped_runs", pd.DataFrame()).to_dict(orient="records"),
             "scopes": {},
         }
@@ -143,6 +219,18 @@ class QaiPortfolioMultirunEvaluator:
             scope_results = val_results if scope == "val" else self._summarize_scope(run_dirs, scope, device)
             output_paths = self._make_output_paths(multirun_root, scope)
             run_output_paths = self._make_output_paths(eval_output_dir, scope)
+            scope_ensemble = (
+                best_family_ensemble
+                if scope == "val"
+                else (
+                    self._build_best_family_ensemble(
+                        scope_results=scope_results,
+                        selection_run_summary_df=val_results["run_summary"],
+                    )
+                    if self.build_best_family_ensemble
+                    else None
+                )
+            )
             top_tables = self._build_top_strategy_tables(
                 scope_results["weights"],
                 scope_results["sample_summary"],
@@ -150,8 +238,20 @@ class QaiPortfolioMultirunEvaluator:
                 top_run_ids,
             )
             nav_frames = self._build_nav_frames(scope_results["sample_summary"])
-            self._plot_scope_growth(scope, nav_frames, top_run_ids, output_paths["growth_plot"])
-            self._plot_scope_growth(scope, nav_frames, top_run_ids, run_output_paths["growth_plot"])
+            self._plot_scope_growth(
+                scope,
+                nav_frames,
+                top_run_ids,
+                output_paths["growth_plot"],
+                ensemble_nav_df=scope_ensemble["nav"] if scope_ensemble is not None else None,
+            )
+            self._plot_scope_growth(
+                scope,
+                nav_frames,
+                top_run_ids,
+                run_output_paths["growth_plot"],
+                ensemble_nav_df=scope_ensemble["nav"] if scope_ensemble is not None else None,
+            )
 
             render_records_table(
                 f"{scope.upper()} Run Summary",
@@ -173,6 +273,19 @@ class QaiPortfolioMultirunEvaluator:
                 top_tables["growth"].to_csv(run_output_paths["growth_by_quarter"], index=False)
                 top_tables["allocations"].to_csv(run_output_paths["top5_allocations"], index=False)
                 top_tables["prices"].to_csv(run_output_paths["top_holdings_prices"], index=False)
+                if scope_ensemble is not None:
+                    scope_ensemble["growth"].to_csv(
+                        output_paths["best_family_ensemble_growth_by_quarter"], index=False
+                    )
+                    scope_ensemble["allocations"].to_csv(
+                        output_paths["best_family_ensemble_allocations"], index=False
+                    )
+                    scope_ensemble["growth"].to_csv(
+                        run_output_paths["best_family_ensemble_growth_by_quarter"], index=False
+                    )
+                    scope_ensemble["allocations"].to_csv(
+                        run_output_paths["best_family_ensemble_allocations"], index=False
+                    )
 
             metrics_payload["scopes"][scope] = {
                 "run_count": int(len(scope_results["run_summary"])),
@@ -189,6 +302,29 @@ class QaiPortfolioMultirunEvaluator:
                 "benchmark_terminal_nav": float(nav_frames["benchmark"]["rebased_nav"].iloc[-1]),
                 "indicator_feature_profile": self._indicator_feature_profile(
                     scope_results["run_summary"].head(1)
+                ),
+                "best_family_ensemble": (
+                    {
+                        **scope_ensemble["summary"],
+                        "outputs": {
+                            "multirun_root": {
+                                "growth_by_quarter": str(
+                                    output_paths["best_family_ensemble_growth_by_quarter"]
+                                ),
+                                "allocations": str(output_paths["best_family_ensemble_allocations"]),
+                            },
+                            "run_dir": {
+                                "growth_by_quarter": str(
+                                    run_output_paths["best_family_ensemble_growth_by_quarter"]
+                                ),
+                                "allocations": str(
+                                    run_output_paths["best_family_ensemble_allocations"]
+                                ),
+                            },
+                        },
+                    }
+                    if scope_ensemble is not None
+                    else None
                 ),
                 "outputs": {
                     "multirun_root": {key: str(value) for key, value in output_paths.items()},
@@ -283,6 +419,37 @@ class QaiPortfolioMultirunEvaluator:
         datamodule = instantiate(OmegaConf.create(data_cfg_dict))
         datamodule.setup()
         return datamodule
+
+    def _data_overrides_from_datamodule(self, datamodule) -> dict[str, Any]:
+        if datamodule is None:
+            return {}
+
+        override_keys = [
+            "train_path",
+            "val_path",
+            "test_path",
+            "price_history_path",
+            "horizons",
+            "target_horizon",
+            "target_frequency",
+            "price_field",
+            "flat_return_threshold",
+        ]
+        overrides = {}
+        for key in override_keys:
+            if hasattr(datamodule, key):
+                value = getattr(datamodule, key)
+                if value is not None:
+                    overrides[key] = value
+        return overrides
+
+    def _with_runtime_data_overrides(self, run_cfg: dict) -> dict:
+        overrides = getattr(self, "_runtime_data_overrides", {}) or {}
+        if not overrides:
+            return run_cfg
+        merged = dict(run_cfg)
+        merged["data"] = {**dict(run_cfg.get("data", {}) or {}), **overrides}
+        return merged
 
     def _build_model(self, run_cfg: dict, datamodule):
         return self._build_model_from_cfg(
@@ -456,7 +623,7 @@ class QaiPortfolioMultirunEvaluator:
         evaluation_scope: str,
         device: torch.device,
     ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-        run_cfg = self._load_yaml(run_dir / "config_resolved.yaml")
+        run_cfg = self._with_runtime_data_overrides(self._load_yaml(run_dir / "config_resolved.yaml"))
         final_metrics = self._load_json(run_dir / "metrics.json") or {}
         best_metrics = self._load_json(run_dir / "artifacts" / "best_metrics.json") or {}
         best_checkpoint_summary = (
@@ -598,7 +765,13 @@ class QaiPortfolioMultirunEvaluator:
             "saved_final_val_growth_alpha": final_metrics.get("val_growth_alpha"),
             "saved_final_val_effective_holdings": final_metrics.get("val_effective_holdings"),
         }
-        return pd.DataFrame(sample_rows), pd.DataFrame(sample_summary_rows), metadata
+        return (
+            pd.DataFrame(sample_rows) if sample_rows else pd.DataFrame(columns=self.WEIGHTS_COLUMNS),
+            pd.DataFrame(sample_summary_rows)
+            if sample_summary_rows
+            else pd.DataFrame(columns=self.SAMPLE_SUMMARY_COLUMNS),
+            metadata,
+        )
 
     def _summarize_scope(
         self,
@@ -629,6 +802,16 @@ class QaiPortfolioMultirunEvaluator:
                     }
                 )
                 continue
+            if sample_summary_df.empty:
+                skipped_runs.append(
+                    {
+                        "run_id": int(run_dir.name) if run_dir.name.isdigit() else run_dir.name,
+                        "evaluation_scope": evaluation_scope,
+                        "reason": "No portfolio samples were produced for this evaluation scope.",
+                    }
+                )
+                continue
+
             all_sample_frames.append(sample_df)
             all_sample_summary_frames.append(sample_summary_df)
 
@@ -805,6 +988,192 @@ class QaiPortfolioMultirunEvaluator:
         )
         return raw_counts_df, target_counts_df, sample_counts_df
 
+    def _build_best_family_ensemble(
+        self,
+        scope_results: dict[str, pd.DataFrame],
+        selection_run_summary_df: pd.DataFrame,
+    ) -> dict[str, Any]:
+        if self.ensemble_weighting != "equal":
+            raise ValueError(
+                f"Unsupported ensemble_weighting: {self.ensemble_weighting}. Expected 'equal'."
+            )
+        if len(self.ensemble_model_families) != 2:
+            raise ValueError(
+                "Best-family ensemble currently requires exactly two model families."
+            )
+
+        selected_rows = []
+        for family in self.ensemble_model_families:
+            family_df = selection_run_summary_df.loc[
+                selection_run_summary_df["model_family"] == family
+            ].reset_index(drop=True)
+            if family_df.empty:
+                raise ValueError(
+                    f"Could not build best-family ensemble; missing model_family={family} in validation summary."
+                )
+            selected_rows.append(family_df.iloc[0].to_dict())
+
+        run_ids = [int(row["run_id"]) for row in selected_rows]
+        family_labels = [str(row["model_family"]) for row in selected_rows]
+        weights_df = scope_results["weights"]
+        sample_summary_df = scope_results["sample_summary"]
+        if weights_df.empty or sample_summary_df.empty:
+            raise ValueError("Cannot build best-family ensemble from empty scope results.")
+
+        join_columns = [
+            "evaluation_scope",
+            "source_split",
+            "sample_key",
+            "time_range",
+            "quarter_end_date",
+            "future_quarter_end_date",
+            "ticker",
+        ]
+        per_family_frames = []
+        for family, run_id in zip(family_labels, run_ids):
+            family_weights_df = weights_df.loc[weights_df["run_id"] == run_id].copy()
+            if family_weights_df.empty:
+                raise ValueError(
+                    f"Could not build best-family ensemble; no replayed weights for run_id={run_id}."
+                )
+            family_weights_df = family_weights_df[join_columns + ["weight", "equal_weight", "current_price", "future_price"]]
+            family_weights_df = family_weights_df.rename(
+                columns={"weight": f"weight_{family}"}
+            )
+            per_family_frames.append(family_weights_df)
+
+        merged_weights_df = per_family_frames[0]
+        for family, family_frame in zip(family_labels[1:], per_family_frames[1:]):
+            merged_weights_df = merged_weights_df.merge(
+                family_frame[join_columns + [f"weight_{family}"]],
+                on=join_columns,
+                how="inner",
+                validate="one_to_one",
+            )
+
+        expected_rows = [len(frame) for frame in per_family_frames]
+        if len(set(expected_rows + [len(merged_weights_df)])) != 1:
+            raise ValueError(
+                "Best-family ensemble requires identical sample/ticker alignment across selected runs."
+            )
+
+        weight_columns = [f"weight_{family}" for family in family_labels]
+        merged_weights_df["ensemble_weight"] = merged_weights_df[weight_columns].mean(axis=1)
+        merged_weights_df["weight"] = merged_weights_df.groupby(
+            ["evaluation_scope", "source_split", "sample_key"]
+        )["ensemble_weight"].transform(lambda values: values / max(float(values.sum()), 1e-8))
+        merged_weights_df["run_id"] = "ensemble_best_attention_bilstm"
+        merged_weights_df["strategy_label"] = "best attention + best bilstm (50/50)"
+        merged_weights_df["model_family"] = "ensemble"
+        merged_weights_df["selected_run_ids"] = ",".join(str(run_id) for run_id in run_ids)
+        merged_weights_df["selected_model_families"] = ",".join(family_labels)
+        merged_weights_df["ticker_return"] = (
+            merged_weights_df["future_price"] / merged_weights_df["current_price"].clip(lower=1e-8) - 1.0
+        )
+
+        ensemble_summary_df = self._summarize_ensemble_samples(merged_weights_df)
+        if ensemble_summary_df.empty:
+            raise ValueError("Best-family ensemble produced no summary rows.")
+
+        nav_base_date = pd.Timestamp(ensemble_summary_df["quarter_end_date"].min()) - pd.offsets.QuarterEnd(1)
+        ensemble_nav_df = self._build_rebased_curve(
+            ensemble_summary_df,
+            value_column="portfolio_growth",
+            group_columns=["strategy_label"],
+            label_column="strategy_label",
+            base_date=nav_base_date,
+        )
+        summary = {
+            "strategy_label": "best attention + best bilstm (50/50)",
+            "attention_run_id": run_ids[0] if family_labels[0] == "attention" else run_ids[1],
+            "bilstm_run_id": run_ids[0] if family_labels[0] == "bilstm" else run_ids[1],
+            "portfolio_growth_mean": float(ensemble_summary_df["portfolio_growth"].mean()),
+            "benchmark_growth_mean": float(ensemble_summary_df["benchmark_growth"].mean()),
+            "growth_alpha_mean": float(ensemble_summary_df["growth_alpha"].mean()),
+            "max_weight_mean": float(ensemble_summary_df["max_weight"].mean()),
+            "effective_holdings_mean": float(ensemble_summary_df["effective_holdings"].mean()),
+            "sample_count": int(len(ensemble_summary_df)),
+            "cumulative_growth": float(ensemble_summary_df["portfolio_growth"].cumprod().iloc[-1]),
+            "benchmark_cumulative_growth": float(
+                ensemble_summary_df["benchmark_growth"].cumprod().iloc[-1]
+            ),
+        }
+        summary["cumulative_alpha"] = (
+            summary["cumulative_growth"] - summary["benchmark_cumulative_growth"]
+        )
+        return {
+            "summary": summary,
+            "allocations": merged_weights_df.sort_values(
+                ["quarter_end_date", "source_split", "weight", "ticker"],
+                ascending=[True, True, False, True],
+            ).reset_index(drop=True),
+            "growth": ensemble_summary_df,
+            "nav": ensemble_nav_df,
+        }
+
+    def _summarize_ensemble_samples(self, ensemble_weights_df: pd.DataFrame) -> pd.DataFrame:
+        summary_rows = []
+        summary_columns = [
+            "evaluation_scope",
+            "source_split",
+            "sample_key",
+            "time_range",
+            "quarter_end_date",
+            "future_quarter_end_date",
+            "portfolio_growth",
+            "benchmark_growth",
+            "growth_alpha",
+            "max_weight",
+            "effective_holdings",
+            "ticker_count",
+            "strategy_label",
+            "run_id",
+            "selected_run_ids",
+            "selected_model_families",
+            "model_family",
+        ]
+        for sample_keys, group in ensemble_weights_df.groupby(
+            ["evaluation_scope", "source_split", "sample_key"], sort=True
+        ):
+            del sample_keys
+            group = group.sort_values(["weight", "ticker"], ascending=[False, True]).reset_index(drop=True)
+            weights = group["weight"].astype(float).to_numpy()
+            current = group["current_price"].astype(float).to_numpy()
+            future = group["future_price"].astype(float).to_numpy()
+            equal_weights = group["equal_weight"].astype(float).to_numpy()
+            weighted_current = float(np.sum(weights * current))
+            weighted_future = float(np.sum(weights * future))
+            benchmark_current = float(np.sum(equal_weights * current))
+            benchmark_future = float(np.sum(equal_weights * future))
+            portfolio_growth = weighted_future / max(weighted_current, 1e-8)
+            benchmark_growth = benchmark_future / max(benchmark_current, 1e-8)
+            summary_rows.append(
+                {
+                    "evaluation_scope": group["evaluation_scope"].iloc[0],
+                    "source_split": group["source_split"].iloc[0],
+                    "sample_key": group["sample_key"].iloc[0],
+                    "time_range": group["time_range"].iloc[0],
+                    "quarter_end_date": group["quarter_end_date"].iloc[0],
+                    "future_quarter_end_date": group["future_quarter_end_date"].iloc[0],
+                    "portfolio_growth": portfolio_growth,
+                    "benchmark_growth": benchmark_growth,
+                    "growth_alpha": portfolio_growth - benchmark_growth,
+                    "max_weight": float(weights.max()),
+                    "effective_holdings": float(1.0 / max(np.square(weights).sum(), 1e-8)),
+                    "ticker_count": int(len(group)),
+                    "strategy_label": group["strategy_label"].iloc[0],
+                    "run_id": group["run_id"].iloc[0],
+                    "selected_run_ids": group["selected_run_ids"].iloc[0],
+                    "selected_model_families": group["selected_model_families"].iloc[0],
+                    "model_family": group["model_family"].iloc[0],
+                }
+            )
+        return (
+            pd.DataFrame(summary_rows, columns=summary_columns)
+            .sort_values(["quarter_end_date", "source_split"])
+            .reset_index(drop=True)
+        )
+
     def _make_output_paths(self, multirun_root: Path, scope: str) -> dict[str, Path]:
         return {
             "run_summary": multirun_root / f"portfolio_eval_run_summary_{scope}.csv",
@@ -813,6 +1182,10 @@ class QaiPortfolioMultirunEvaluator:
             "top5_allocations": multirun_root / f"portfolio_eval_top5_allocations_{scope}.csv",
             "top_holdings_prices": multirun_root
             / f"portfolio_eval_top5_top_holdings_prices_{scope}.csv",
+            "best_family_ensemble_growth_by_quarter": multirun_root
+            / f"portfolio_eval_best_family_ensemble_growth_by_quarter_{scope}.csv",
+            "best_family_ensemble_allocations": multirun_root
+            / f"portfolio_eval_best_family_ensemble_allocations_{scope}.csv",
             "growth_plot": multirun_root / f"portfolio_eval_growth_{scope}.png",
         }
 
@@ -1000,6 +1373,7 @@ class QaiPortfolioMultirunEvaluator:
         nav_frames: dict[str, pd.DataFrame],
         top_run_ids: list[int],
         output_path: Path,
+        ensemble_nav_df: pd.DataFrame | None = None,
     ) -> None:
         strategy_nav_df = nav_frames["strategy"]
         benchmark_nav_df = nav_frames["benchmark"]
@@ -1045,6 +1419,18 @@ class QaiPortfolioMultirunEvaluator:
                 linewidth=2,
                 label=label,
             )
+        if ensemble_nav_df is not None and not ensemble_nav_df.empty:
+            ensemble_label = ensemble_nav_df["strategy_label"].iloc[0]
+            for ax in axes:
+                ax.plot(
+                    ensemble_nav_df["quarter_end_date"],
+                    ensemble_nav_df["rebased_nav"],
+                    color="#d62728",
+                    linewidth=2.5,
+                    linestyle="-.",
+                    marker="o",
+                    label=ensemble_label,
+                )
         axes[1].plot(
             benchmark_nav_df["quarter_end_date"],
             benchmark_nav_df["rebased_nav"],

@@ -9,3 +9,8 @@ top_holdings_per_quarter: 10
 device: auto
 write_outputs: true
 allow_incomplete_runs: false
+build_best_family_ensemble: true
+ensemble_model_families:
+  - attention
+  - bilstm
+ensemble_weighting: equal

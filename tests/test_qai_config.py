@@ -92,6 +92,9 @@ def test_qai_portfolio_multirun_eval_resolves_portfolio_flow() -> None:
         cfg.evaluator._target_
         == "src.evaluators.qai_portfolio_multirun_evaluator.QaiPortfolioMultirunEvaluator"
     )
+    assert cfg.evaluator.build_best_family_ensemble is True
+    assert list(cfg.evaluator.ensemble_model_families) == ["attention", "bilstm"]
+    assert cfg.evaluator.ensemble_weighting == "equal"
 
 
 def test_qai_portfolio_overfit_experiment_resolves_portfolio_flow() -> None:
